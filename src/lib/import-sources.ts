@@ -62,21 +62,31 @@ function retryDelay(response: Response, attempt: number) {
   return Math.min(30_000, exponential + Math.random() * Math.min(1_000, exponential * 0.25));
 }
 
-async function throttledGoogleFetch(url: string) {
+async function throttledGoogleFetch(url: string, deadline: number) {
   const minimumInterval = process.env.GOOGLE_BOOKS_API_KEY ? 750 : 1_500;
   const delay = Math.max(0, nextGoogleRequestAt - Date.now());
-  if (delay) await wait(delay);
+  if (delay) await wait(Math.min(delay, Math.max(0, deadline - Date.now())));
   nextGoogleRequestAt = Date.now() + minimumInterval;
 
   for (let attempt = 0; attempt < 5; attempt += 1) {
-    const response = await fetch(url, { cache: "no-store" });
+    if (Date.now() >= deadline) throw new GoogleRetryPendingError(0, requestErrorCount, "Google Books retry pending: deadline exceeded before request");
+    const remaining = deadline - Date.now();
+    let response: Response;
+    try {
+      response = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(Math.max(1_000, Math.min(remaining, 10_000))) });
+    } catch {
+      requestErrorCount += 1;
+      throw new GoogleRetryPendingError(0, requestErrorCount, "Google Books retry pending: request timed out");
+    }
     if (response.ok) return response;
     if (response.status !== 429 && response.status < 500) {
       throw new Error(`Google Books failed: ${response.status}`);
     }
     requestErrorCount += 1;
     if (attempt === 4) throw new GoogleRetryPendingError(response.status, 5, `Google Books retry pending: HTTP ${response.status}`);
-    await wait(retryDelay(response, attempt));
+    const nextDelay = retryDelay(response, attempt);
+    if (Date.now() + nextDelay >= deadline) throw new GoogleRetryPendingError(response.status, requestErrorCount, "Google Books retry pending: deadline exceeded during backoff");
+    await wait(nextDelay);
   }
   throw new Error("Google Books retry loop exhausted");
 }
@@ -131,7 +141,7 @@ function searchPlan(hint: GoogleHint): { method: GoogleSearchMethod; query: stri
   return plan.filter((entry, index, entries) => entries.findIndex((candidate) => compact(candidate.query) === compact(entry.query)) === index);
 }
 
-export async function fetchGoogleBookWithFallback(hint: GoogleHint): Promise<GoogleSearchResult> {
+export async function fetchGoogleBookWithFallback(hint: GoogleHint, deadline = Date.now() + 25_000): Promise<GoogleSearchResult> {
   const cacheKey = JSON.stringify([normalizeIsbn(hint.isbn), hint.title ?? "", hint.authors ?? []]);
   const cached = googleRequestCache.get(cacheKey);
   if (cached) return cached;
@@ -139,7 +149,8 @@ export async function fetchGoogleBookWithFallback(hint: GoogleHint): Promise<Goo
     const startErrors = requestErrorCount;
     const key = process.env.GOOGLE_BOOKS_API_KEY ? `&key=${encodeURIComponent(process.env.GOOGLE_BOOKS_API_KEY)}` : "";
     for (const step of searchPlan(hint)) {
-      const response = await throttledGoogleFetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(step.query)}&maxResults=40&printType=books${key}`);
+      if (Date.now() >= deadline) break;
+      const response = await throttledGoogleFetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(step.query)}&maxResults=40&printType=books${key}`, deadline);
       const items = googleSchema.parse(await response.json()).items ?? [];
       const match = items.find((item) => itemMatches(item, hint));
       if (match) return { book: toImported(match, hint.isbn, step.method, requestErrorCount - startErrors), apiErrorCount: requestErrorCount - startErrors };
@@ -187,8 +198,8 @@ export async function fetchOpenLibraryBookByIsbn(value: string): Promise<Importe
   };
 }
 
-export async function supplementFromOpenLibrary(book: ImportedEdition): Promise<ImportedEdition> {
-  const rakuten = await fetchRakutenBookByIsbn(book.isbn13);
+export async function supplementFromOpenLibrary(book: ImportedEdition, deadline = Date.now() + 15_000): Promise<ImportedEdition> {
+  const rakuten = await fetchRakutenBookByIsbn(book.isbn13, deadline);
   const withRakuten: ImportedEdition = rakuten ? {
     ...book,
     synopsis: book.synopsis || rakuten.itemCaption || "",
@@ -201,10 +212,17 @@ export async function supplementFromOpenLibrary(book: ImportedEdition): Promise<
     supplementSources: [...(book.supplementSources ?? []), { provider: "rakuten", externalId: book.isbn13, raw: rakuten.raw }],
   } : book;
   if (withRakuten.coverUrl && withRakuten.publisher && withRakuten.synopsis && withRakuten.authors.length) return withRakuten;
+  if (Date.now() >= deadline) return withRakuten;
   const key = `ISBN:${withRakuten.isbn13}`;
-  const response = await fetch(`https://openlibrary.org/api/books?bibkeys=${key}&jscmd=data&format=json`, {
-    cache: "no-store", headers: { "User-Agent": `dokusho-neet/1.0 (${process.env.SITE_URL ?? "https://dokusho-neet.vercel.app"})` },
-  });
+  let response: Response;
+  try {
+    response = await fetch(`https://openlibrary.org/api/books?bibkeys=${key}&jscmd=data&format=json`, {
+      cache: "no-store", headers: { "User-Agent": `dokusho-neet/1.0 (${process.env.SITE_URL ?? "https://dokusho-neet.vercel.app"})` },
+      signal: AbortSignal.timeout(Math.max(1_000, Math.min(deadline - Date.now(), 8_000))),
+    });
+  } catch {
+    return withRakuten;
+  }
   if (!response.ok) return withRakuten;
   const raw = openLibrarySchema.parse(await response.json());
   const item = raw[key];
