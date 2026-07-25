@@ -104,6 +104,17 @@ export async function enqueueIsbnImport(isbns: string[]) {
   return job.id;
 }
 
+// claimImportJobが一時的に何もつかめない場合(クールダウン中など)でも、既存の未完了ジョブがあれば
+// 重複してジョブを作らないようにする
+export async function ensurePopularImportJobQueued(isbns: string[]) {
+  const db = getDb();
+  const existing = (await db.select({ id: importJobs.id }).from(importJobs)
+    .where(and(eq(importJobs.kind, "isbn_batch_free_v1"), inArray(importJobs.status, ["queued", "running", "retry"])))
+    .limit(1))[0];
+  if (existing) return existing.id;
+  return enqueueIsbnImport(isbns);
+}
+
 export async function resumeImportJob(jobId: string) {
   const db = getDb();
   await db.update(importJobItems).set({ status: "queued", error: null, processedAt: null }).where(and(eq(importJobItems.jobId, jobId), inArray(importJobItems.status, ["failed", "retry"])));

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { isDatabaseConfigured } from "@/db/client";
 import { popularImportIsbns } from "@/lib/import-candidates";
-import { claimImportJob, enqueueIsbnImport, processImportJob } from "@/lib/import-pipeline";
+import { claimImportJob, ensurePopularImportJobQueued, processImportJob } from "@/lib/import-pipeline";
 import { processDueRetryPending } from "@/lib/pipeline-orchestrator";
 
 export const dynamic = "force-dynamic";
@@ -16,8 +16,8 @@ export async function GET(request: Request) {
   const workerId = `vercel-${crypto.randomUUID()}`;
   let jobId = await claimImportJob(workerId);
   if (!jobId) {
-    // キューが空の場合は、ランキング・受賞作・著名作家などの優先候補を毎日補充する
-    await enqueueIsbnImport(popularImportIsbns());
+    // キューが空の場合は、ランキング・受賞作・著名作家などの優先候補を補充する(既存の未完了ジョブがあれば再利用)
+    await ensurePopularImportJobQueued(popularImportIsbns());
     jobId = await claimImportJob(workerId);
   }
   if (!jobId) return NextResponse.json({ processed: 0, message: "No queued jobs" });
