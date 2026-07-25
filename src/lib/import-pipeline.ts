@@ -184,10 +184,17 @@ export async function refreshDerivedData(workIds: string[]) {
 
 export async function finalizeImportJob(jobId: string) { const completed = await getDb().select({ workId: importJobItems.workId }).from(importJobItems).where(and(eq(importJobItems.jobId, jobId), eq(importJobItems.status, "completed"))); return refreshDerivedData([...new Set(completed.map((row) => row.workId).filter((id): id is string => Boolean(id)))]); }
 
-export async function processImportJob(jobId: string, batchSize = 25) {
+export async function processImportJob(jobId: string, batchSize = 25, timeBudgetMs = 45_000) {
   const db = getDb();
+  const startedAt = Date.now();
   const items = await db.select().from(importJobItems).where(and(eq(importJobItems.jobId, jobId), inArray(importJobItems.status, ["queued", "retry"]))).limit(Math.min(50, Math.max(1, batchSize)));
-  for (const item of items) { try { const outcome = await importIsbn(item.sourceKey); await db.update(importJobItems).set({ status: "completed", workId: outcome.workId, error: JSON.stringify(outcome), processedAt: new Date() }).where(eq(importJobItems.id, item.id)); } catch (error) { const retry = /retry pending|429|503/i.test(error instanceof Error ? error.message : String(error)); await db.update(importJobItems).set({ status: retry ? "retry" : "failed", error: error instanceof Error ? error.message.slice(0, 1000) : "Unknown error", processedAt: new Date() }).where(eq(importJobItems.id, item.id)); } }
+  let processed = 0;
+  for (const item of items) {
+    // サーバーレス関数の実行時間制限(Vercel Hobbyは60秒)に収まるよう、時間切れなら残りは次回実行に持ち越す
+    if (Date.now() - startedAt > timeBudgetMs) break;
+    processed += 1;
+    try { const outcome = await importIsbn(item.sourceKey); await db.update(importJobItems).set({ status: "completed", workId: outcome.workId, error: JSON.stringify(outcome), processedAt: new Date() }).where(eq(importJobItems.id, item.id)); } catch (error) { const retry = /retry pending|429|503/i.test(error instanceof Error ? error.message : String(error)); await db.update(importJobItems).set({ status: retry ? "retry" : "failed", error: error instanceof Error ? error.message.slice(0, 1000) : "Unknown error", processedAt: new Date() }).where(eq(importJobItems.id, item.id)); }
+  }
   const remaining = await db.select({ count: sql<number>`count(*)::int` }).from(importJobItems).where(and(eq(importJobItems.jobId, jobId), inArray(importJobItems.status, ["queued", "retry"]))); const finalization = remaining[0]?.count ? undefined : await finalizeImportJob(jobId);
-  await db.update(importJobs).set(remaining[0]?.count ? { status: "retry", lockedAt: null, lockedBy: null, nextRunAt: new Date(Date.now() + 60_000), updatedAt: new Date() } : { status: "completed", payload: { finalization }, lockedAt: null, lockedBy: null, completedAt: new Date(), updatedAt: new Date() }).where(eq(importJobs.id, jobId)); revalidateTag("catalog", "max"); return { processed: items.length, remaining: remaining[0]?.count ?? 0, finalization };
+  await db.update(importJobs).set(remaining[0]?.count ? { status: "retry", lockedAt: null, lockedBy: null, nextRunAt: new Date(Date.now() + 60_000), updatedAt: new Date() } : { status: "completed", payload: { finalization }, lockedAt: null, lockedBy: null, completedAt: new Date(), updatedAt: new Date() }).where(eq(importJobs.id, jobId)); revalidateTag("catalog", "max"); return { processed, remaining: remaining[0]?.count ?? 0, finalization };
 }
