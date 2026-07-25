@@ -1,0 +1,21 @@
+import type { Book } from "@/lib/catalog";
+import { resolveMetadata,type NormalizedMetadata } from "@/lib/metadata-providers";
+
+export type AutoTheme="ミステリー"|"恋愛"|"自己啓発";
+export type Intelligence={themes:AutoTheme[];tags:string[];confidence:number;basis:"ai"|"metadata";classified:boolean};
+
+const themeRules:Record<AutoTheme,string[]>={
+  "ミステリー":["ミステリー","推理","謎","事件","殺人","犯罪","探偵","刑事","どんでん返し","心理戦","サスペンス"],
+  "恋愛":["恋愛","恋","愛する","結婚","夫婦","青春","ラブストーリー","片想い","初恋","二人の人生","二人の関係"],
+  "自己啓発":["自己啓発","習慣","人生","成功","成長","思考","仕事術","生き方","ビジネス","キャリア"]
+};
+const tagRules:Record<string,string[]>={"どんでん返し":["どんでん返し","反転","真実"],"泣ける":["感動","涙","泣ける","喪失","希望"],"心理戦":["心理戦","駆け引き","知略","頭脳"],"謎解き":["謎","推理","探偵"],"人生を変える":["人生","生き方","習慣","成長"],"青春":["青春","学校","少年","少女"]};
+const searchable=(metadata:Pick<NormalizedMetadata,"title"|"authors"|"description"|"publisher"|"categories">)=>[metadata.title,...metadata.authors,metadata.description,metadata.publisher??"",...metadata.categories].join(" ").normalize("NFKC").toLocaleLowerCase("ja");
+
+export function classifyMetadata(metadata:Pick<NormalizedMetadata,"title"|"authors"|"description"|"publisher"|"categories">):Intelligence{const text=searchable(metadata);const exactCategories=new Set(metadata.categories.map(value=>value.normalize("NFKC")));const scored=(Object.entries(themeRules) as [AutoTheme,string[]][]).map(([theme,words])=>({theme,score:words.filter(word=>text.includes(word)).length})).filter(item=>item.score>0);const themes=scored.filter(item=>exactCategories.has(item.theme)||(item.theme==="自己啓発"?item.score>=2:item.score>=1)).sort((a,b)=>b.score-a.score).map(item=>item.theme);const tags=Object.entries(tagRules).filter(([,words])=>words.some(word=>text.includes(word))).map(([tag])=>tag).slice(0,4);const max=Math.max(0,...scored.map(item=>item.score));return {themes,tags,confidence:Math.min(.92,max*.25),basis:"metadata",classified:themes.length>0}}
+export function metadataFromBook(book:Book):NormalizedMetadata{return {isbn:book.isbn,title:book.title,authors:[book.author],description:book.synopsis,publisher:book.publisher,categories:book.genres,coverImage:book.coverImage,sources:["catalog"]}}
+export function intelligenceFor(book:Book){return classifyMetadata(metadataFromBook(book))}
+
+export async function classifyWithConfiguredAI(metadata:NormalizedMetadata):Promise<Intelligence>{if(!process.env.OPENAI_API_KEY)return classifyMetadata(metadata);try{const response=await fetch("https://api.openai.com/v1/responses",{method:"POST",headers:{Authorization:`Bearer ${process.env.OPENAI_API_KEY}`,"Content-Type":"application/json"},body:JSON.stringify({model:process.env.OPENAI_CLASSIFICATION_MODEL??"gpt-5-mini",input:[{role:"system",content:"書誌情報だけを根拠に分類する。テーマはミステリー・恋愛・自己啓発のみで、複数選択可。根拠が弱ければ空配列にする。短い日本語タグを最大4件生成する。"},{role:"user",content:JSON.stringify(metadata)}],text:{format:{type:"json_schema",name:"book_classification",strict:true,schema:{type:"object",properties:{themes:{type:"array",uniqueItems:true,items:{type:"string",enum:["ミステリー","恋愛","自己啓発"]}},tags:{type:"array",maxItems:4,items:{type:"string"}},confidence:{type:"number",minimum:0,maximum:1}},required:["themes","tags","confidence"],additionalProperties:false}}}})});if(!response.ok)return classifyMetadata(metadata);const data=await response.json() as {output_text?:string};const parsed=JSON.parse(data.output_text??"{}") as {themes:AutoTheme[];tags:string[];confidence:number};return {themes:parsed.themes,tags:parsed.tags.slice(0,4),confidence:parsed.confidence,basis:"ai",classified:parsed.themes.length>0}}catch{return classifyMetadata(metadata)}}
+
+export async function enrichBook(book:Book){const metadata=await resolveMetadata(book.isbn,{isbn:book.isbn,title:book.title,authors:[book.author],description:book.synopsis,publisher:book.publisher,categories:book.genres,coverImage:book.coverImage});return {...book,title:metadata.title,author:metadata.authors[0]??book.author,synopsis:metadata.description||book.synopsis,publisher:metadata.publisher??book.publisher,coverImage:metadata.coverImage??book.coverImage,sources:metadata.sources,intelligence:await classifyWithConfiguredAI(metadata)}}

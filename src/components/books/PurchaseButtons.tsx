@@ -1,0 +1,6 @@
+import { ShoppingBag, ShoppingCart } from "lucide-react";
+import type { Book } from "@/lib/catalog";
+import { amazonUrl, rakutenUrl } from "@/lib/catalog";
+
+const shared="inline-flex min-h-13 w-full items-center justify-center gap-2 rounded-[18px] border border-black bg-white px-5 text-sm font-bold shadow-sm transition duration-200 hover:-translate-y-0.5 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2";
+export function PurchaseButtons({book}:{book:Book}){return <div className="grid w-full gap-3 sm:grid-cols-2"><a href={amazonUrl(book)} target="_blank" rel="sponsored noopener noreferrer" className={`${shared} text-[#146eb4] hover:bg-[#f2f8fc] focus-visible:ring-[#146eb4]`}><ShoppingCart size={18} aria-hidden="true"/>Amazonで購入</a><a href={rakutenUrl(book)} target="_blank" rel="sponsored noopener noreferrer" className={`${shared} text-[#bf0000] hover:bg-[#fff4f4] focus-visible:ring-[#bf0000]`}><ShoppingBag size={18} aria-hidden="true"/>楽天で購入</a></div>}

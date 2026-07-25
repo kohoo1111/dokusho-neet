@@ -1,0 +1,1 @@
+export function PageIntro({eyebrow,title,description}:{eyebrow:string;title:string;description:string}){return <header className="max-w-3xl pb-12 pt-10 md:pb-16 md:pt-16"><p className="eyebrow">{eyebrow}</p><h1 className="display-title mt-4">{title}</h1><p className="mt-6 max-w-2xl text-base leading-8 text-[#656565] md:text-lg">{description}</p></header>}
