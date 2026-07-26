@@ -119,13 +119,16 @@ export function coverUrl(book: Book) {
   return book.coverImage??`https://thumbnail.image.rakuten.co.jp/@0_mall/book/cabinet/${book.isbn.slice(-4)}/${book.isbn}.jpg`;
 }
 export function amazonUrl(book: Book) {
-  const params = new URLSearchParams({ k: `${book.title} ${book.author}` });
+  const keyword = book.isbn ? `${book.isbn} ${book.title} ${book.author}` : `${book.title} ${book.author}`;
+  const params = new URLSearchParams({ k: keyword });
   const tag = process.env.NEXT_PUBLIC_AMAZON_ASSOCIATE_TAG;
   if (tag) params.set("tag", tag);
   return `https://www.amazon.co.jp/s?${params.toString()}`;
 }
 export function rakutenUrl(book: Book) {
-  return book.rakutenUrl ?? `https://books.rakuten.co.jp/search?sitem=${encodeURIComponent(`${book.title} ${book.author}`)}`;
+  if (book.rakutenUrl) return book.rakutenUrl;
+  const keyword = book.isbn ? `${book.isbn} ${book.title} ${book.author}` : `${book.title} ${book.author}`;
+  return `https://books.rakuten.co.jp/search?sitem=${encodeURIComponent(keyword)}`;
 }
 export function getBook(id: string) { return books.find((book) => book.id === id); }
 export function booksByGenre(name: string) { return books.filter((book) => book.genres.includes(name)); }

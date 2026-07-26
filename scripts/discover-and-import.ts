@@ -1,4 +1,4 @@
-import { importIsbn } from "../src/lib/import-pipeline";
+import { importIsbn, refreshPopularityAndRanking } from "../src/lib/import-pipeline";
 import { isbn13From } from "../src/lib/text-normalization";
 
 // 国立国会図書館サーチ(NDL Search) SRU API: 無料・無制限・APIキー不要。
@@ -112,6 +112,9 @@ async function main() {
       }
     }
   }
+
+  // 取り込んだだけでは著者の人気度・ランキング表に反映されないため、最後にまとめて更新する
+  if (imported > 0) await refreshPopularityAndRanking();
 
   console.log(JSON.stringify({
     imported, skipped, failed, bucketsSwept,

@@ -190,15 +190,23 @@ export async function importIsbn(isbn: string, options: { enrich?: boolean; hint
   return { workId, imported: true, skipped: false, classified: false, embedded: false, related: 0, searchMethod: book.searchMethod ?? "unknown", apiErrorCount: book.apiErrorCount ?? google.apiErrorCount, durationMs: Date.now() - started };
 }
 
-export async function refreshDerivedData(workIds: string[]) {
-  const db = getDb(); let relatedUpdated = 0; for (const workId of workIds) relatedUpdated += await refreshRelatedBooks(workId);
+// 著者の人気度とランキング表の再計算。全体を対象にした軽い集計クエリなので、
+// ジョブの完了を待たずいつでも呼んでよい(GitHub Actions経由の取り込みにはジョブという概念がないため必須)
+export async function refreshPopularityAndRanking() {
+  const db = getDb();
   await db.execute(sql`update authors a set popularity_score=least(1,x.book_count/10.0),updated_at=now() from (select author_id,count(*)::real book_count from work_authors group by author_id)x where a.id=x.author_id`);
   const rankingIsbns = currentRanking.map((book) => book.isbn); const rankingWorks = await db.select({ isbn: editions.isbn13, workId: editions.workId }).from(editions).where(inArray(editions.isbn13, rankingIsbns)); const byIsbn = new Map(rankingWorks.map((row) => [row.isbn, row.workId]));
   let snapshot = (await db.select({ id: rankingSnapshots.id }).from(rankingSnapshots).where(and(eq(rankingSnapshots.source, "rakuten"), eq(rankingSnapshots.period, rankingPeriod))).limit(1))[0];
   if (!snapshot) [snapshot] = await db.insert(rankingSnapshots).values({ source: "rakuten", label: "今売れている本 TOP20", period: rankingPeriod, capturedAt: new Date() }).returning({ id: rankingSnapshots.id });
   await db.delete(rankingEntries).where(eq(rankingEntries.snapshotId, snapshot.id)); const rankingValues = currentRanking.flatMap((book, index) => { const id = byIsbn.get(book.isbn); return id ? [{ snapshotId: snapshot.id, workId: id, rank: index + 1 }] : []; }); if (rankingValues.length) await db.insert(rankingEntries).values(rankingValues);
-  const authorCount = workIds.length ? await db.select({ count: sql<number>`count(distinct ${workAuthors.authorId})::int` }).from(workAuthors).where(inArray(workAuthors.workId, workIds)) : [{ count: 0 }];
-  return { relatedUpdated, rankingUpdated: rankingValues.length, authorsUpdated: authorCount[0]?.count ?? 0, themesUpdated: 0 };
+  return { rankingUpdated: rankingValues.length };
+}
+
+export async function refreshDerivedData(workIds: string[]) {
+  let relatedUpdated = 0; for (const workId of workIds) relatedUpdated += await refreshRelatedBooks(workId);
+  const { rankingUpdated } = await refreshPopularityAndRanking();
+  const authorCount = workIds.length ? await getDb().select({ count: sql<number>`count(distinct ${workAuthors.authorId})::int` }).from(workAuthors).where(inArray(workAuthors.workId, workIds)) : [{ count: 0 }];
+  return { relatedUpdated, rankingUpdated, authorsUpdated: authorCount[0]?.count ?? 0, themesUpdated: 0 };
 }
 
 export async function finalizeImportJob(jobId: string) { const completed = await getDb().select({ workId: importJobItems.workId }).from(importJobItems).where(and(eq(importJobItems.jobId, jobId), eq(importJobItems.status, "completed"))); return refreshDerivedData([...new Set(completed.map((row) => row.workId).filter((id): id is string => Boolean(id)))]); }
@@ -214,6 +222,11 @@ export async function processImportJob(jobId: string, batchSize = 25, timeBudget
     processed += 1;
     try { const outcome = await importIsbn(item.sourceKey); await db.update(importJobItems).set({ status: "completed", workId: outcome.workId, error: JSON.stringify(outcome), processedAt: new Date() }).where(eq(importJobItems.id, item.id)); } catch (error) { const retry = /retry pending|429|503/i.test(error instanceof Error ? error.message : String(error)); await db.update(importJobItems).set({ status: retry ? "retry" : "failed", error: error instanceof Error ? error.message.slice(0, 1000) : "Unknown error", processedAt: new Date() }).where(eq(importJobItems.id, item.id)); }
   }
-  const remaining = await db.select({ count: sql<number>`count(*)::int` }).from(importJobItems).where(and(eq(importJobItems.jobId, jobId), inArray(importJobItems.status, ["queued", "retry"]))); const finalization = remaining[0]?.count ? undefined : await finalizeImportJob(jobId);
-  await db.update(importJobs).set(remaining[0]?.count ? { status: "retry", lockedAt: null, lockedBy: null, nextRunAt: new Date(Date.now() + 60_000), updatedAt: new Date() } : { status: "completed", payload: { finalization }, lockedAt: null, lockedBy: null, completedAt: new Date(), updatedAt: new Date() }).where(eq(importJobs.id, jobId)); revalidateTag("catalog", "max"); return { processed, remaining: remaining[0]?.count ?? 0, finalization };
+  const remaining = await db.select({ count: sql<number>`count(*)::int` }).from(importJobItems).where(and(eq(importJobItems.jobId, jobId), inArray(importJobItems.status, ["queued", "retry"])));
+  const jobDone = !remaining[0]?.count;
+  const finalization = jobDone ? await finalizeImportJob(jobId) : undefined;
+  // ジョブが完了しない限り著者人気度・ランキングは更新されないままだったため、
+  // 処理した分があれば(まだ残件があっても)軽い集計だけは毎回反映しておく
+  if (!jobDone && processed > 0) await refreshPopularityAndRanking();
+  await db.update(importJobs).set(!jobDone ? { status: "retry", lockedAt: null, lockedBy: null, nextRunAt: new Date(Date.now() + 60_000), updatedAt: new Date() } : { status: "completed", payload: { finalization }, lockedAt: null, lockedBy: null, completedAt: new Date(), updatedAt: new Date() }).where(eq(importJobs.id, jobId)); revalidateTag("catalog", "max"); return { processed, remaining: remaining[0]?.count ?? 0, finalization };
 }
