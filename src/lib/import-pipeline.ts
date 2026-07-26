@@ -139,14 +139,22 @@ export async function claimImportJob(workerId: string) {
   return (result.rows[0] as { id?: string } | undefined)?.id;
 }
 
-export async function importIsbn(isbn: string, options: { enrich?: boolean } = {}): Promise<ImportOutcome> {
+const hasJapaneseText = (value: string) => /[぀-ヿ一-鿿]/.test(value);
+
+export async function importIsbn(isbn: string, options: { enrich?: boolean; hint?: { title?: string; authors?: string[] } } = {}): Promise<ImportOutcome> {
   const started = Date.now(); const db = getDb(); const normalizedIsbn = normalizeIsbn(isbn);
   const cached = await db.select({ workId: editions.workId }).from(editions).where(eq(editions.isbn13, normalizedIsbn)).limit(1);
   if (cached[0]) return { workId: cached[0].workId, imported: false, skipped: true, classified: false, embedded: false, related: 0, searchMethod: "db_cache", apiErrorCount: 0, durationMs: Date.now() - started };
-  const hint = [...books, ...currentRanking].find((item) => normalizeIsbn(item.isbn) === normalizedIsbn);
-  const google = await fetchGoogleBookWithFallback({ isbn: normalizedIsbn, title: hint?.title, authors: hint?.author ? [hint.author] : undefined });
-  const book = google.book ? await supplementFromOpenLibrary(google.book) : null;
+  const curatedHint = [...books, ...currentRanking].find((item) => normalizeIsbn(item.isbn) === normalizedIsbn);
+  const hintTitle = options.hint?.title ?? curatedHint?.title;
+  const hintAuthors = options.hint?.authors ?? (curatedHint?.author ? [curatedHint.author] : undefined);
+  const google = await fetchGoogleBookWithFallback({ isbn: normalizedIsbn, title: hintTitle, authors: hintAuthors });
+  let book = google.book ? await supplementFromOpenLibrary(google.book) : null;
   if (!book) throw new Error(`Google Books not found: ${normalizedIsbn}`);
+  // Google Booksが同じISBNのローマ字表記版(図書館カタログ用の翻字レコード等)を返すことがあるため、
+  // 日本語の発掘元タイトル・著者名が分かっている場合はそちらを優先する
+  if (hintTitle && hasJapaneseText(hintTitle) && !hasJapaneseText(book.title)) book = { ...book, title: hintTitle };
+  if (hintAuthors?.length && hintAuthors.some(hasJapaneseText) && !book.authors.some(hasJapaneseText)) book = { ...book, authors: hintAuthors };
   const payloadHash = createHash("sha256").update(JSON.stringify(book.raw)).digest("hex");
   const existingEdition = await db.select({ id: editions.id, workId: editions.workId }).from(editions).where(eq(editions.isbn13, book.isbn13)).limit(1);
   if (existingEdition[0]) {

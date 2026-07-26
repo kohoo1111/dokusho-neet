@@ -18,6 +18,9 @@ const MAX_MINUTES = Number(process.env.MAX_MINUTES_PER_RUN ?? 45);
 
 type NdlCandidate = { isbn13: string; title?: string; author?: string };
 
+// 図書館の蔵書目録・索引・年次報告など、読者向けの「本」ではない書誌データを除外する
+const NON_BOOK_TITLE_PATTERN = /目録|総目次|索引|便覧|要覧|統計年報|年次報告|白書$/;
+
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function shuffle<T>(items: T[]): T[] {
@@ -65,10 +68,12 @@ async function fetchBucket(ndc: string, year: number): Promise<NdlCandidate[]> {
         continue;
       }
       const titleMatch = record.match(/<dcterms:title>([^<]*)<\/dcterms:title>/);
+      const title = titleMatch?.[1]?.trim();
+      if (title && NON_BOOK_TITLE_PATTERN.test(title)) continue;
       const creatorBlock = record.match(/<dcterms:creator>([\s\S]*?)<\/dcterms:creator>/);
       const nameMatch = creatorBlock?.[1].match(/<foaf:name>([^<]*)<\/foaf:name>/);
       const author = nameMatch?.[1].replace(/,\s*\d{4}-?(\d{4})?-?\s*$/, "").replace(/,\s*/, "").trim();
-      results.push({ isbn13, title: titleMatch?.[1]?.trim(), author: author || undefined });
+      results.push({ isbn13, title, author: author || undefined });
     }
     if (records.length < PAGE_SIZE) break;
     await sleep(400);
@@ -97,7 +102,7 @@ async function main() {
       if (seenThisRun.has(candidate.isbn13)) continue;
       seenThisRun.add(candidate.isbn13);
       try {
-        const outcome = await importIsbn(candidate.isbn13);
+        const outcome = await importIsbn(candidate.isbn13, { hint: { title: candidate.title, authors: candidate.author ? [candidate.author] : undefined } });
         if (outcome.imported) imported += 1;
         else skipped += 1;
       } catch (error) {
