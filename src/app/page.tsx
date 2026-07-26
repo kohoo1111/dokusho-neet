@@ -3,6 +3,7 @@ import { ArrowRight, BarChart3, BookOpen, Heart, PenTool, Trophy } from "lucide-
 import { BookCard, BookRail } from "@/components/books/BookCard";
 import { authorDirectory, awardShelf, discoveryShelf, rankingShelf } from "@/lib/catalog-repository";
 
+export const revalidate = 3600;
 
 const categories=[
  {href:"/ranking",label:"ランキング",sub:"いま売れている20冊",icon:BarChart3,tone:"bg-[#a44d31] text-white"},
