@@ -36,10 +36,37 @@ function unescapeXml(value: string) {
   return value.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&");
 }
 
+// 新しい本を優先しつつ、名作もある程度混ざるように発行年に重みをつける
+const RECENCY_BANDS = [
+  { maxAgeYears: 10, weight: 0.7 },
+  { maxAgeYears: 30, weight: 0.2 },
+  { maxAgeYears: Infinity, weight: 0.1 },
+];
+
 function buckets() {
-  const list: { ndc: string; year: number }[] = [];
-  for (const ndc of NDC_CODES) for (let year = YEAR_START; year <= YEAR_END; year += 1) list.push({ ndc, year });
-  return shuffle(list);
+  const all: { ndc: string; year: number }[] = [];
+  for (const ndc of NDC_CODES) for (let year = YEAR_START; year <= YEAR_END; year += 1) all.push({ ndc, year });
+  const bandPools = RECENCY_BANDS.map(() => [] as { ndc: string; year: number }[]);
+  for (const item of all) {
+    const age = YEAR_END - item.year;
+    const bandIndex = RECENCY_BANDS.findIndex((band) => age <= band.maxAgeYears);
+    bandPools[bandIndex].push(item);
+  }
+  const pools = bandPools.map((pool) => shuffle(pool));
+
+  const result: { ndc: string; year: number }[] = [];
+  while (pools.some((pool) => pool.length)) {
+    const roll = Math.random();
+    let cumulative = 0;
+    let chosen = -1;
+    for (let i = 0; i < pools.length; i += 1) {
+      cumulative += RECENCY_BANDS[i].weight;
+      if (roll <= cumulative && pools[i].length) { chosen = i; break; }
+    }
+    if (chosen === -1) chosen = pools.findIndex((pool) => pool.length);
+    result.push(pools[chosen].pop()!);
+  }
+  return result;
 }
 
 async function fetchBucket(ndc: string, year: number): Promise<NdlCandidate[]> {
