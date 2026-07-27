@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, or, sql } from "drizzle-orm";
 import { revalidateTag } from "next/cache";
 import { getDb } from "@/db/client";
 import { aiClassifications, authorAliases, authors, editions, importJobItems, importJobs, publishers, rankingEntries, rankingSnapshots, relatedBooks, sourceRecords, tags, themes, workAuthors, workTags, workThemes, works } from "@/db/schema";
@@ -108,8 +108,12 @@ export async function enqueueIsbnImport(isbns: string[]) {
 // 重複してジョブを作らないようにする
 export async function ensurePopularImportJobQueued(isbns: string[]) {
   const db = getDb();
+  // 'running'のまま10分以上動きがないジョブは異常終了とみなし、ブロックしない(claimImportJob側で再取得される)
   const existing = (await db.select({ id: importJobs.id }).from(importJobs)
-    .where(and(eq(importJobs.kind, "isbn_batch_free_v1"), inArray(importJobs.status, ["queued", "running", "retry"])))
+    .where(and(eq(importJobs.kind, "isbn_batch_free_v1"), or(
+      inArray(importJobs.status, ["queued", "retry"]),
+      and(eq(importJobs.status, "running"), sql`${importJobs.lockedAt} > now() - interval '10 minutes'`),
+    )))
     .limit(1))[0];
   if (existing) return existing.id;
   return enqueueIsbnImport(isbns);
@@ -134,7 +138,8 @@ export async function importJobReport(jobId: string) {
 }
 
 export async function claimImportJob(workerId: string) {
-  const result = await getDb().execute(sql`with candidate as (select id from import_jobs where status in ('queued','retry') and next_run_at<=now() and (locked_at is null or locked_at<now()-interval '10 minutes') order by created_at for update skip locked limit 1)
+  // 'running'のまま止まったジョブ(関数のタイムアウト等で異常終了した場合)も、ロックが古ければ再取得の対象にする
+  const result = await getDb().execute(sql`with candidate as (select id from import_jobs where status in ('queued','retry','running') and next_run_at<=now() and (locked_at is null or locked_at<now()-interval '10 minutes') order by created_at for update skip locked limit 1)
     update import_jobs j set status='running',locked_at=now(),locked_by=${workerId},attempts=j.attempts+1,started_at=coalesce(j.started_at,now()),updated_at=now() from candidate where j.id=candidate.id returning j.id`);
   return (result.rows[0] as { id?: string } | undefined)?.id;
 }
