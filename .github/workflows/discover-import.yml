@@ -7,7 +7,7 @@ on:
     inputs:
       max_imports:
         description: "1回の実行で新規に取り込む本の最大数"
-        default: "200"
+        default: "60"
       max_minutes:
         description: "1回の実行の最大実行時間(分)"
         default: "45"
@@ -40,5 +40,5 @@ jobs:
           RAKUTEN_APPLICATION_ID: ${{ secrets.RAKUTEN_APPLICATION_ID }}
           RAKUTEN_ACCESS_KEY: ${{ secrets.RAKUTEN_ACCESS_KEY }}
           RAKUTEN_AFFILIATE_ID: ${{ secrets.RAKUTEN_AFFILIATE_ID }}
-          MAX_IMPORTS_PER_RUN: ${{ inputs.max_imports || '200' }}
+          MAX_IMPORTS_PER_RUN: ${{ inputs.max_imports || '60' }}
           MAX_MINUTES_PER_RUN: ${{ inputs.max_minutes || '45' }}

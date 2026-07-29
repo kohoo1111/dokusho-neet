@@ -13,8 +13,11 @@ const PAGE_SIZE = 200;
 // 1クエリあたり大きく深追いしてもNDL側がstartRecordの上限でエラーを返すため、2ページ(最大400件)まで
 const MAX_PAGES_PER_BUCKET = 2;
 
-const MAX_IMPORTS = Number(process.env.MAX_IMPORTS_PER_RUN ?? 150);
+// Google Books APIの無料枠(1日あたり)は1回の実行で使い切れてしまうため、8回/日の定期実行に配分できる控えめな値にする
+const MAX_IMPORTS = Number(process.env.MAX_IMPORTS_PER_RUN ?? 60);
 const MAX_MINUTES = Number(process.env.MAX_MINUTES_PER_RUN ?? 45);
+// この回数だけ連続してクォータ超過が続いたら、その日はもう望みがないと判断して早期終了する
+const QUOTA_EXHAUSTED_STREAK_LIMIT = 8;
 
 type NdlCandidate = { isbn13: string; title?: string; author?: string };
 
@@ -116,26 +119,35 @@ async function main() {
   let skipped = 0;
   let failed = 0;
   let bucketsSwept = 0;
+  let quotaStreak = 0;
+  let quotaExhausted = false;
   const failures: { isbn: string; error: string }[] = [];
 
-  for (const { ndc, year } of buckets()) {
+  outer: for (const { ndc, year } of buckets()) {
     if (imported >= MAX_IMPORTS || Date.now() > deadline) break;
     const candidates = await fetchBucket(ndc, year);
     bucketsSwept += 1;
     await sleep(500);
 
     for (const candidate of candidates) {
-      if (imported >= MAX_IMPORTS || Date.now() > deadline) break;
+      if (imported >= MAX_IMPORTS || Date.now() > deadline) break outer;
       if (seenThisRun.has(candidate.isbn13)) continue;
       seenThisRun.add(candidate.isbn13);
       try {
         const outcome = await importIsbn(candidate.isbn13, { hint: { title: candidate.title, authors: candidate.author ? [candidate.author] : undefined } });
+        quotaStreak = 0;
         if (outcome.imported) imported += 1;
         else skipped += 1;
       } catch (error) {
         failed += 1;
         const message = error instanceof Error ? error.message : String(error);
         if (failures.length < 30) failures.push({ isbn: candidate.isbn13, error: message.slice(0, 200) });
+        if (/429|retry pending/i.test(message)) {
+          quotaStreak += 1;
+          if (quotaStreak >= QUOTA_EXHAUSTED_STREAK_LIMIT) { quotaExhausted = true; break outer; }
+        } else {
+          quotaStreak = 0;
+        }
       }
     }
   }
@@ -146,7 +158,7 @@ async function main() {
   console.log(JSON.stringify({
     imported, skipped, failed, bucketsSwept,
     durationMs: Date.now() - startedAt,
-    stoppedReason: imported >= MAX_IMPORTS ? "max_imports_reached" : Date.now() > deadline ? "time_budget_reached" : "buckets_exhausted",
+    stoppedReason: quotaExhausted ? "google_books_quota_exhausted" : imported >= MAX_IMPORTS ? "max_imports_reached" : Date.now() > deadline ? "time_budget_reached" : "buckets_exhausted",
     sampleFailures: failures,
   }, null, 2));
 }
