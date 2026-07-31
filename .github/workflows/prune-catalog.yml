@@ -1,0 +1,37 @@
+name: Prune catalog
+
+# 既存カタログを現在の掲載基準(小説・エッセイ中心)で点検する。
+# 既定は確認のみ。実際に削除する場合は apply に true を指定して実行する。
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "true にすると実際に削除します(既定は確認のみ)"
+        type: boolean
+        default: false
+
+concurrency:
+  group: catalog-write
+  cancel-in-progress: false
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm prune:catalog
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          APPLY: ${{ inputs.apply }}
