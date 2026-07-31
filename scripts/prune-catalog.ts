@@ -1,8 +1,10 @@
 import { inArray, sql } from "drizzle-orm";
 import { getDb, isDatabaseConfigured } from "../src/db/client";
-import { authors, works } from "../src/db/schema";
+import { authors, editions, works } from "../src/db/schema";
+import { books } from "../src/lib/catalog";
 import { rejectReason, type RejectReason } from "../src/lib/content-filter";
 import { refreshPopularityAndRanking } from "../src/lib/import-pipeline";
+import { normalizeIsbn } from "../src/lib/text-normalization";
 
 // 既存カタログを現在の掲載基準で点検し、対象外の作品を取り除く。
 // 既定は確認のみ(dry run)。実際に削除するには APPLY=true を指定する。
@@ -15,11 +17,27 @@ async function main() {
   if (!isDatabaseConfigured()) throw new Error("DATABASE_URL is not configured");
   const db = getDb();
 
+  // 手動で選んだ名作・受賞作(catalog.ts)は、機械的な判定に関わらず必ず残す。
+  // これらは名作ページや受賞作ページの土台になっているため。
+  const curatedIsbns = new Set<string>();
+  for (const book of books) {
+    if (!book.isbn) continue;
+    try { curatedIsbns.add(normalizeIsbn(book.isbn)); } catch { /* 不正なISBNは無視 */ }
+  }
+  const curatedRows = curatedIsbns.size
+    ? await db.select({ workId: editions.workId, isbn: editions.isbn13 }).from(editions)
+        .where(inArray(editions.isbn13, [...curatedIsbns]))
+    : [];
+  const protectedWorkIds = new Set(curatedRows.map((row) => row.workId));
+
   const rows = await db.select({ id: works.id, title: works.title }).from(works);
   const doomed: Doomed[] = [];
+  let protectedCount = 0;
   for (const row of rows) {
     const reason = rejectReason(row.title);
-    if (reason) doomed.push({ id: row.id, title: row.title, reason });
+    if (!reason) continue;
+    if (protectedWorkIds.has(row.id)) { protectedCount += 1; continue; }
+    doomed.push({ id: row.id, title: row.title, reason });
   }
 
   const byReason = new Map<RejectReason, Doomed[]>();
@@ -40,6 +58,7 @@ async function main() {
   console.log(`mode: ${APPLY ? "APPLY (削除します)" : "DRY RUN (確認のみ・削除しません)"}`);
   console.log(`総作品数: ${rows.length}`);
   console.log(`除外対象: ${doomed.length} (残る作品: ${rows.length - doomed.length})`);
+  if (protectedCount) console.log(`※ 判定には該当したが、手動登録の名作・受賞作のため保護: ${protectedCount}件`);
   console.log("");
 
   for (const [reason, list] of [...byReason.entries()].sort((a, b) => b[1].length - a[1].length)) {
