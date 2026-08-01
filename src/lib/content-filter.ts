@@ -2,7 +2,7 @@
 // 発掘時(scripts/discover-and-import.ts)と既存データの点検(scripts/prune-catalog.ts)の
 // 両方から使い、判定基準がずれないようにここへ集約する。
 
-export type RejectReason = "non_book" | "reference" | "adult" | "light_novel" | "later_volume";
+export type RejectReason = "non_book" | "reference" | "professional" | "adult" | "light_novel" | "later_volume";
 
 // 図書館の蔵書目録・索引・年次報告など、読者向けの「本」ではない書誌データ。
 // 「目錄」のように旧字体で登録されている資料もあるため、録/錄の両方を見る。
@@ -20,6 +20,18 @@ const REFERENCE_TITLE_PATTERN = new RegExp([
   "事典|辞典|辞書|図鑑|年鑑|白書|統計",
   "レシピ|献立|ガイドブック|地図帳|時刻表",
   "カタログ|作品集|写真集|画集|楽譜",
+].join("|"));
+
+// 経営・会計・金融などの専門書/実務書。以前NDC336(経営)を発掘対象にしていた頃の名残で多く残っている。
+// 自己啓発(「〜する技術」「〜の習慣」など)は残したいので、職業・学術寄りの語だけを対象にする。
+const PROFESSIONAL_TITLE_PATTERN = new RegExp([
+  "簿記|会計学|原価計算|財務諸表|決算|監査|税制|節税|確定申告",
+  "経営学|経営戦略|経営管理|経営分析|経営計画|経営組織|経営監査|企業統治",
+  "アカウンティング|ファイナンス|コーポレート|ガバナンス|コンプライアンス",
+  "マーケティング論|マネジメント論|組織論|人事制度|労働法|会社法|商法|民法",
+  "株式|証券|債券|投資信託|不動産投資|資産運用|М&A|M&A|IPO|ESG",
+  "ビジネス英語|英会話|TOEIC|TOEFL|英文法|英語表現|英単語|英語学習|英語力|英作文",
+  "統計学|計量|実証分析|論文の書き方|研究法",
 ].join("|"));
 
 // 成人向け・官能小説。一般向けサイトとして不適切なうえ、広告(AdSense)の掲載ポリシーにも抵触する。
@@ -79,6 +91,7 @@ export function isLightNovelImprint(label: string) {
 export function rejectReason(title: string, options: { imprints?: string[] } = {}): RejectReason | null {
   if (NON_BOOK_TITLE_PATTERN.test(title)) return "non_book";
   if (REFERENCE_TITLE_PATTERN.test(title)) return "reference";
+  if (PROFESSIONAL_TITLE_PATTERN.test(title)) return "professional";
   if (ADULT_TITLE_PATTERN.test(title)) return "adult";
   if (LIGHT_NOVEL_TITLE_PATTERN.test(title)) return "light_novel";
   if (laterVolume(title)) return "later_volume";

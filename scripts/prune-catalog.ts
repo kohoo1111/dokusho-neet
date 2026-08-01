@@ -50,6 +50,7 @@ async function main() {
   const labels: Record<RejectReason, string> = {
     non_book: "書籍でない資料(目録・索引など)",
     reference: "実用書・教材・年度版",
+    professional: "経営・会計・金融などの専門書",
     adult: "成人向け",
     light_novel: "ライトノベル",
     later_volume: "シリーズ2巻目以降",
