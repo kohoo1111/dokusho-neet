@@ -11,7 +11,9 @@ import { normalizeIsbn } from "../src/lib/text-normalization";
 const APPLY = process.env.APPLY === "true";
 const SAMPLES_PER_REASON = 15;
 
-type Doomed = { id: string; title: string; reason: RejectReason };
+// 掲載基準による除外に加え、同じ作品が重複登録されている分も取り除く
+type PruneReason = RejectReason | "duplicate";
+type Doomed = { id: string; title: string; reason: PruneReason };
 
 async function main() {
   if (!isDatabaseConfigured()) throw new Error("DATABASE_URL is not configured");
@@ -32,28 +34,60 @@ async function main() {
 
   const rows = await db.select({ id: works.id, title: works.title }).from(works);
   const doomed: Doomed[] = [];
+  const doomedIds = new Set<string>();
   let protectedCount = 0;
   for (const row of rows) {
     const reason = rejectReason(row.title);
     if (!reason) continue;
     if (protectedWorkIds.has(row.id)) { protectedCount += 1; continue; }
     doomed.push({ id: row.id, title: row.title, reason });
+    doomedIds.add(row.id);
   }
 
-  const byReason = new Map<RejectReason, Doomed[]>();
+  // 同じ作品が複数登録されている場合(版違いなどで別作品として取り込まれたもの)は
+  // 情報が最も揃っている1件だけ残す。同じ本が何度も並ぶのを防ぐため。
+  const duplicateGroups = await db.execute(sql`
+    with work_author as (
+      select w.id, w.normalized_title, w.quality_score, w.created_at,
+             coalesce(min(a.normalized_name), '') as author_key
+      from works w
+      left join work_authors wa on wa.work_id = w.id
+      left join authors a on a.id = wa.author_id
+      group by w.id
+    )
+    select normalized_title, author_key,
+           array_agg(id order by quality_score desc, created_at asc) as ids
+    from work_author
+    group by normalized_title, author_key
+    having count(*) > 1
+  `);
+  const titleById = new Map(rows.map((row) => [row.id, row.title]));
+  for (const raw of duplicateGroups.rows) {
+    const row = raw as { ids: string[] };
+    // 情報が最も揃っている1件を残す。ただし手動登録の名作が含まれる場合はそちらを優先して残す。
+    const keeper = row.ids.find((id) => protectedWorkIds.has(id)) ?? row.ids[0];
+    for (const id of row.ids) {
+      if (id === keeper || protectedWorkIds.has(id) || doomedIds.has(id)) continue;
+      doomed.push({ id, title: titleById.get(id) ?? "(タイトル不明)", reason: "duplicate" });
+      doomedIds.add(id);
+    }
+  }
+
+  const byReason = new Map<PruneReason, Doomed[]>();
   for (const item of doomed) {
     const list = byReason.get(item.reason) ?? [];
     list.push(item);
     byReason.set(item.reason, list);
   }
 
-  const labels: Record<RejectReason, string> = {
+  const labels: Record<PruneReason, string> = {
     non_book: "書籍でない資料(目録・索引など)",
     reference: "実用書・教材・年度版",
     professional: "経営・会計・金融などの専門書",
     adult: "成人向け",
     light_novel: "ライトノベル",
     later_volume: "シリーズ2巻目以降",
+    duplicate: "重複登録(同じ作品の2件目以降)",
   };
 
   console.log(`mode: ${APPLY ? "APPLY (削除します)" : "DRY RUN (確認のみ・削除しません)"}`);
