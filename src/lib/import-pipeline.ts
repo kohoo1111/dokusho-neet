@@ -6,7 +6,7 @@ import { aiClassifications, authorAliases, authors, editions, importJobItems, im
 import { classifyMetadata, type AutoTheme } from "@/lib/book-intelligence";
 import { books } from "@/lib/catalog";
 import { currentRanking, rankingPeriod } from "@/lib/current-ranking";
-import { fetchGoogleBookWithFallback, supplementFromOpenLibrary, type ImportedEdition } from "@/lib/import-sources";
+import { fetchGoogleBookWithFallback, fetchRakutenEdition, GoogleRetryPendingError, supplementFromOpenLibrary, type ImportedEdition } from "@/lib/import-sources";
 import { normalizePublisherName } from "@/lib/normalization-dictionaries";
 import { calculateQualityScore, calculateRecommendScore } from "@/lib/scores";
 import { normalizeIsbn, normalizeSearchText, slugify } from "@/lib/text-normalization";
@@ -153,9 +153,20 @@ export async function importIsbn(isbn: string, options: { enrich?: boolean; hint
   const curatedHint = [...books, ...currentRanking].find((item) => normalizeIsbn(item.isbn) === normalizedIsbn);
   const hintTitle = options.hint?.title ?? curatedHint?.title;
   const hintAuthors = options.hint?.authors ?? (curatedHint?.author ? [curatedHint.author] : undefined);
-  const google = await fetchGoogleBookWithFallback({ isbn: normalizedIsbn, title: hintTitle, authors: hintAuthors });
-  let book = google.book ? await supplementFromOpenLibrary(google.book) : null;
-  if (!book) throw new Error(`Google Books not found: ${normalizedIsbn}`);
+  // Google Booksを主に使うが、収録が無い新刊や1日の利用上限に達した場合は楽天ブックスから取り込む。
+  // ここで諦めると、発売直後の話題作(ランキング掲載作など)がいつまでも登録されない。
+  let googleApiErrors = 0;
+  let source: Awaited<ReturnType<typeof fetchGoogleBookWithFallback>>["book"] = null;
+  try {
+    const google = await fetchGoogleBookWithFallback({ isbn: normalizedIsbn, title: hintTitle, authors: hintAuthors });
+    source = google.book;
+    googleApiErrors = google.apiErrorCount;
+  } catch (error) {
+    if (!(error instanceof GoogleRetryPendingError)) throw error;
+    googleApiErrors = error.apiErrorCount;
+  }
+  let book = source ? await supplementFromOpenLibrary(source) : await fetchRakutenEdition(normalizedIsbn);
+  if (!book) throw new Error(`Book not found in Google Books or Rakuten: ${normalizedIsbn}`);
   // Google Booksが同じISBNのローマ字表記版(図書館カタログ用の翻字レコード等)を返すことがあるため、
   // 日本語の発掘元タイトル・著者名が分かっている場合はそちらを優先する
   if (hintTitle && hasJapaneseText(hintTitle) && !hasJapaneseText(book.title)) book = { ...book, title: hintTitle };
@@ -169,7 +180,7 @@ export async function importIsbn(isbn: string, options: { enrich?: boolean; hint
       await db.insert(sourceRecords).values({ provider: source.provider, externalId: source.externalId, editionId: existingEdition[0].id, payloadHash: supplementHash, payload: source.raw }).onConflictDoUpdate({ target: [sourceRecords.provider, sourceRecords.externalId], set: { editionId: existingEdition[0].id, payloadHash: supplementHash, payload: source.raw, fetchedAt: new Date() } });
     }
     if (options.enrich !== false) { await updateQuality(existingEdition[0].workId, book); await classifyAndTagWork(existingEdition[0].workId, book); }
-    return { workId: existingEdition[0].workId, imported: false, skipped: true, classified: false, embedded: false, related: 0, searchMethod: book.searchMethod ?? "unknown", apiErrorCount: book.apiErrorCount ?? google.apiErrorCount, durationMs: Date.now() - started };
+    return { workId: existingEdition[0].workId, imported: false, skipped: true, classified: false, embedded: false, related: 0, searchMethod: book.searchMethod ?? "unknown", apiErrorCount: book.apiErrorCount ?? googleApiErrors, durationMs: Date.now() - started };
   }
   const authorRows = [];
   for (const name of book.authors) {
@@ -192,7 +203,7 @@ export async function importIsbn(isbn: string, options: { enrich?: boolean; hint
     await db.insert(sourceRecords).values({ provider: source.provider, externalId: source.externalId, editionId: edition.id, payloadHash: supplementHash, payload: source.raw }).onConflictDoUpdate({ target: [sourceRecords.provider, sourceRecords.externalId], set: { editionId: edition.id, payloadHash: supplementHash, payload: source.raw, fetchedAt: new Date() } });
   }
   if (options.enrich !== false) { await updateQuality(workId, book); await classifyAndTagWork(workId, book); }
-  return { workId, imported: true, skipped: false, classified: false, embedded: false, related: 0, searchMethod: book.searchMethod ?? "unknown", apiErrorCount: book.apiErrorCount ?? google.apiErrorCount, durationMs: Date.now() - started };
+  return { workId, imported: true, skipped: false, classified: false, embedded: false, related: 0, searchMethod: book.searchMethod ?? "unknown", apiErrorCount: book.apiErrorCount ?? googleApiErrors, durationMs: Date.now() - started };
 }
 
 // 著者の人気度とランキング表の再計算。全体を対象にした軽い集計クエリなので、

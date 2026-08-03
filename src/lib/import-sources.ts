@@ -165,6 +165,34 @@ export async function fetchGoogleBookByIsbn(value: string): Promise<ImportedEdit
   return (await fetchGoogleBookWithFallback({ isbn: value })).book;
 }
 
+// Google Booksに無い本(発売直後の新刊など)や、1日の利用上限に達したときの代替。
+// 楽天ブックスは国内の新刊を早く収録しており、利用上限も緩い。
+export async function fetchRakutenEdition(value: string, deadline = Date.now() + 15_000): Promise<ImportedEdition | null> {
+  const isbn13 = isbn13From(value);
+  const rakuten = await fetchRakutenBookByIsbn(isbn13, deadline);
+  if (!rakuten?.title) return null;
+  return {
+    provider: "google_books",
+    externalId: `rakuten:${isbn13}`,
+    isbn13,
+    title: normalizeEditionTitle(rakuten.title).displayTitle,
+    // 楽天は著者を「著者名/著者名」のように1つの文字列で返す
+    authors: (rakuten.author ?? "").split(/[\/／・,、]/).map((name) => name.trim()).filter(Boolean),
+    synopsis: rakuten.itemCaption ?? "",
+    publisher: rakuten.publisherName,
+    publicationDate: rakuten.salesDate,
+    categories: [],
+    coverUrl: rakuten.largeImageUrl ?? rakuten.mediumImageUrl ?? rakuten.smallImageUrl,
+    rakutenUrl: rakuten.affiliateUrl ?? rakuten.itemUrl,
+    seriesName: rakuten.seriesName,
+    language: "ja",
+    raw: { rakuten: rakuten.raw },
+    searchMethod: "isbn",
+    apiErrorCount: 0,
+    supplementSources: [{ provider: "rakuten", externalId: isbn13, raw: rakuten.raw }],
+  };
+}
+
 const openLibrarySchema = z.record(z.string(), z.object({
   title: z.string().optional(), authors: z.array(z.object({ name: z.string() })).optional(), publishers: z.array(z.object({ name: z.string() })).optional(),
   publish_date: z.string().optional(), subjects: z.array(z.object({ name: z.string() })).optional(), cover: z.object({ large: z.string().optional(), medium: z.string().optional() }).optional(),

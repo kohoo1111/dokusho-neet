@@ -120,6 +120,9 @@ export async function discoveryShelf(options: { themeSlug?: string; fallbackThem
 }
 
 export async function authorWorks(slug: string, limit = 20) {
+  // 作家スラッグは日本語なのでURLではパーセントエンコードされる。
+  // ここで戻さないと該当作家が引けず、作家ページの作品一覧が常に空になる。
+  slug = decodeURIComponent(slug);
   if (!isDatabaseConfigured()) return [];
   try {
     const db = getDb();
