@@ -1,4 +1,5 @@
 import { intelligenceFor } from "@/lib/book-intelligence";
+import { isbn10From } from "@/lib/text-normalization";
 
 export type AwardName = "本屋大賞" | "芥川賞" | "直木賞" | "このミステリーがすごい！" | "本格ミステリ大賞" | "江戸川乱歩賞" | "山本周五郎賞" | "吉川英治文学賞" | "日本推理作家協会賞" | "日本SF大賞" | "柴田錬三郎賞" | "野間文芸賞" | "谷崎潤一郎賞" | "三島由紀夫賞";
 export type ClassicGroup = "日本文学" | "海外文学" | "テーマ別";
@@ -125,7 +126,9 @@ type PurchaseTarget = { isbn: string; title: string; author: string; isbn10?: st
 export function amazonUrl(book: PurchaseTarget) {
   const tag = process.env.NEXT_PUBLIC_AMAZON_ASSOCIATE_TAG;
   // 書籍のASINはISBN-10と一致するため、分かる場合は検索結果ではなく商品ページへ直接送る。
-  if (book.isbn10) return `https://www.amazon.co.jp/dp/${book.isbn10}${tag ? `?tag=${encodeURIComponent(tag)}` : ""}`;
+  // 取り込み元がISBN-10を返していなくても、ISBN-13から復元できることが多い。
+  const asin = book.isbn10 ?? (book.isbn ? isbn10From(book.isbn) : undefined);
+  if (asin) return `https://www.amazon.co.jp/dp/${asin}${tag ? `?tag=${encodeURIComponent(tag)}` : ""}`;
   // ISBNだけで検索する。タイトルや著者名を足すと語が多すぎて0件になることがあるため。
   const params = new URLSearchParams({ k: book.isbn || `${book.title} ${book.author}` });
   if (tag) params.set("tag", tag);
