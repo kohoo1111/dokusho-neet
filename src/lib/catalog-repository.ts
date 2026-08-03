@@ -13,7 +13,7 @@ const dbShelf = unstable_cache(async (themeSlug?: string) => {
   const db = getDb();
   const rows = await db.select({
     id: works.id, slug: works.slug, title: works.title, synopsis: works.synopsis, author: authors.name, authorSlug: authors.slug,
-    isbn: editions.isbn13, coverImage: editions.coverUrl, rakutenUrl: editions.rakutenUrl, publisher: sql<string | null>`null`, quality: works.qualityScore,
+    isbn: editions.isbn13, isbn10: editions.isbn10, coverImage: editions.coverUrl, rakutenUrl: editions.rakutenUrl, publisher: sql<string | null>`null`, quality: works.qualityScore,
     recommend: works.recommendScore, popularity: bookStats.popularityScore, views: bookStats.views, lastShownAt: bookStats.lastShownAt,
   }).from(works)
     .innerJoin(workAuthors, eq(workAuthors.workId, works.id)).innerJoin(authors, eq(authors.id, workAuthors.authorId))
@@ -24,7 +24,7 @@ const dbShelf = unstable_cache(async (themeSlug?: string) => {
     .orderBy(desc(works.recommendScore)).limit(200);
   return rows.map((row): DatabaseBook => ({
     id: row.slug, databaseId: row.id, title: row.title, author: row.author, authorSlug: row.authorSlug, isbn: row.isbn ?? "",
-    synopsis: row.synopsis ?? "", genres: [], publishedYear: 0, coverImage: row.coverImage ?? undefined, rakutenUrl: row.rakutenUrl ?? undefined, publisher: row.publisher ?? undefined,
+    synopsis: row.synopsis ?? "", genres: [], publishedYear: 0, coverImage: row.coverImage ?? undefined, isbn10: row.isbn10 ?? undefined, rakutenUrl: row.rakutenUrl ?? undefined, publisher: row.publisher ?? undefined,
     quality: row.quality, recommend: row.recommend, popularity: row.popularity ?? 0, views: row.views ?? 0, lastShownAt: row.lastShownAt,
   }));
 }, ["catalog-shelf-v1"], { revalidate: 300, tags: ["catalog"] });
@@ -36,7 +36,7 @@ async function dbBooksByIsbns(isbns: string[], limit = 200): Promise<CatalogBook
       .innerJoin(workAuthors, eq(workAuthors.workId, works.id)).innerJoin(authors, eq(authors.id, workAuthors.authorId))
       .innerJoin(editions, and(eq(editions.workId, works.id), eq(editions.isPrimary, true))).leftJoin(publishers, eq(publishers.id, editions.publisherId))
       .where(inArray(editions.isbn13, isbns)).limit(limit);
-    const mapped = new Map(rows.map(({ work, edition, author, publisher }) => [edition.isbn13, ({ id: work.slug, databaseId: work.id, title: work.title, author: author.name, authorSlug: author.slug, isbn: edition.isbn13 ?? "", synopsis: work.synopsis ?? "", genres: [], publishedYear: 0, coverImage: edition.coverUrl ?? undefined, rakutenUrl: edition.rakutenUrl ?? undefined, publisher: publisher ?? undefined } satisfies CatalogBook)]));
+    const mapped = new Map(rows.map(({ work, edition, author, publisher }) => [edition.isbn13, ({ id: work.slug, databaseId: work.id, title: work.title, author: author.name, authorSlug: author.slug, isbn: edition.isbn13 ?? "", synopsis: work.synopsis ?? "", genres: [], publishedYear: 0, coverImage: edition.coverUrl ?? undefined, isbn10: edition.isbn10 ?? undefined, rakutenUrl: edition.rakutenUrl ?? undefined, publisher: publisher ?? undefined } satisfies CatalogBook)]));
     return isbns.flatMap((isbn) => mapped.get(isbn) ? [mapped.get(isbn)!] : []);
   } catch { return []; }
 }
@@ -74,7 +74,7 @@ export async function bookRecord(slug: string) {
       .where(eq(works.slug, slug)).limit(1))[0];
     if (!row) return undefined;
     const curated = books.find((book) => book.isbn === row.edition.isbn13);
-    return { id: row.work.slug, databaseId: row.work.id, title: row.work.title, author: row.author.name, authorSlug: row.author.slug, isbn: row.edition.isbn13 ?? "", synopsis: row.work.synopsis ?? "", genres: [], publishedYear: 0, coverImage: row.edition.coverUrl ?? undefined, rakutenUrl: row.edition.rakutenUrl ?? undefined, publisher: row.publisher ?? undefined, awards: curated?.awards } satisfies CatalogBook;
+    return { id: row.work.slug, databaseId: row.work.id, title: row.work.title, author: row.author.name, authorSlug: row.author.slug, isbn: row.edition.isbn13 ?? "", synopsis: row.work.synopsis ?? "", genres: [], publishedYear: 0, coverImage: row.edition.coverUrl ?? undefined, isbn10: row.edition.isbn10 ?? undefined, rakutenUrl: row.edition.rakutenUrl ?? undefined, publisher: row.publisher ?? undefined, awards: curated?.awards } satisfies CatalogBook;
   } catch { return undefined; }
 }
 
@@ -127,7 +127,7 @@ export async function authorWorks(slug: string, limit = 20) {
       .innerJoin(workAuthors, eq(workAuthors.authorId, authors.id)).innerJoin(works, eq(works.id, workAuthors.workId))
       .innerJoin(editions, and(eq(editions.workId, works.id), eq(editions.isPrimary, true)))
       .where(eq(authors.slug, slug)).orderBy(desc(works.recommendScore)).limit(Math.max(5, limit));
-    return rows.map(({ work, edition, author }): CatalogBook => ({ id: work.slug, databaseId: work.id, title: work.title, author: author.name, authorSlug: author.slug, isbn: edition.isbn13 ?? "", synopsis: work.synopsis ?? "", genres: [], publishedYear: 0, coverImage: edition.coverUrl ?? undefined, rakutenUrl: edition.rakutenUrl ?? undefined, publisher: undefined }));
+    return rows.map(({ work, edition, author }): CatalogBook => ({ id: work.slug, databaseId: work.id, title: work.title, author: author.name, authorSlug: author.slug, isbn: edition.isbn13 ?? "", synopsis: work.synopsis ?? "", genres: [], publishedYear: 0, coverImage: edition.coverUrl ?? undefined, isbn10: edition.isbn10 ?? undefined, rakutenUrl: edition.rakutenUrl ?? undefined, publisher: undefined }));
   } catch { return []; }
 }
 
@@ -142,7 +142,7 @@ export async function searchCatalog(query: string, limit = 30) {
     .leftJoin(authorAliases, eq(authorAliases.authorId, authors.id)).innerJoin(editions, eq(editions.workId, works.id))
     .where(or(ilike(works.normalizedTitle, pattern), ilike(authors.normalizedName, pattern), ilike(authorAliases.normalizedName, pattern), eq(editions.isbn13, query.replace(/\D/g, ""))))
     .orderBy(desc(works.recommendScore)).limit(limit);
-  return rows.map(({ work, edition, author }): CatalogBook => ({ id: work.slug, databaseId: work.id, title: work.title, author: author.name, authorSlug: author.slug, isbn: edition.isbn13 ?? "", synopsis: work.synopsis ?? "", genres: [], publishedYear: 0, coverImage: edition.coverUrl ?? undefined, rakutenUrl: edition.rakutenUrl ?? undefined }));
+  return rows.map(({ work, edition, author }): CatalogBook => ({ id: work.slug, databaseId: work.id, title: work.title, author: author.name, authorSlug: author.slug, isbn: edition.isbn13 ?? "", synopsis: work.synopsis ?? "", genres: [], publishedYear: 0, coverImage: edition.coverUrl ?? undefined, isbn10: edition.isbn10 ?? undefined, rakutenUrl: edition.rakutenUrl ?? undefined }));
   } catch { return []; }
 }
 

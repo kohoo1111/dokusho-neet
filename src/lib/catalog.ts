@@ -19,6 +19,7 @@ export type Book = {
   featured?: boolean;
   coverImage?: string;
   publisher?: string;
+  isbn10?: string;
   rakutenUrl?: string;
 };
 
@@ -118,17 +119,31 @@ export const books: Book[] = rawBooks;
 export function coverUrl(book: Book) {
   return book.coverImage??`https://thumbnail.image.rakuten.co.jp/@0_mall/book/cabinet/${book.isbn.slice(-4)}/${book.isbn}.jpg`;
 }
-export function amazonUrl(book: Book) {
-  const keyword = book.isbn ? `${book.isbn} ${book.title} ${book.author}` : `${book.title} ${book.author}`;
-  const params = new URLSearchParams({ k: keyword });
+// 購入リンクは書影カードなど本以外の型からも組み立てるため、必要な項目だけを受け取る
+type PurchaseTarget = { isbn: string; title: string; author: string; isbn10?: string; rakutenUrl?: string };
+
+export function amazonUrl(book: PurchaseTarget) {
   const tag = process.env.NEXT_PUBLIC_AMAZON_ASSOCIATE_TAG;
+  // 書籍のASINはISBN-10と一致するため、分かる場合は検索結果ではなく商品ページへ直接送る。
+  if (book.isbn10) return `https://www.amazon.co.jp/dp/${book.isbn10}${tag ? `?tag=${encodeURIComponent(tag)}` : ""}`;
+  // ISBNだけで検索する。タイトルや著者名を足すと語が多すぎて0件になることがあるため。
+  const params = new URLSearchParams({ k: book.isbn || `${book.title} ${book.author}` });
   if (tag) params.set("tag", tag);
   return `https://www.amazon.co.jp/s?${params.toString()}`;
 }
-export function rakutenUrl(book: Book) {
-  if (book.rakutenUrl) return book.rakutenUrl;
-  const keyword = book.isbn ? `${book.isbn} ${book.title} ${book.author}` : `${book.title} ${book.author}`;
-  return `https://books.rakuten.co.jp/search?sitem=${encodeURIComponent(keyword)}`;
+
+// 楽天は素のURLでは成果が計上されないため、アフィリエイトIDを持つ中継URLで包む必要がある。
+function withRakutenAffiliate(url: string) {
+  const affiliateId = process.env.NEXT_PUBLIC_RAKUTEN_AFFILIATE_ID;
+  if (!affiliateId) return url;
+  if (url.includes("hb.afl.rakuten.co.jp")) return url;
+  return `https://hb.afl.rakuten.co.jp/hgc/${affiliateId}/?pc=${encodeURIComponent(url)}&m=${encodeURIComponent(url)}`;
+}
+
+export function rakutenUrl(book: PurchaseTarget) {
+  if (book.rakutenUrl) return withRakutenAffiliate(book.rakutenUrl);
+  const keyword = book.isbn || `${book.title} ${book.author}`;
+  return withRakutenAffiliate(`https://books.rakuten.co.jp/search?sitem=${encodeURIComponent(keyword)}`);
 }
 export function getBook(id: string) { return books.find((book) => book.id === id); }
 export function booksByGenre(name: string) { return books.filter((book) => book.genres.includes(name)); }
