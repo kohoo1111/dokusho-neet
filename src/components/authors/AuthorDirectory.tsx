@@ -1,7 +1,47 @@
 "use client";
-import { useMemo,useState } from "react";
+
+import { useMemo, useState } from "react";
 import Link from "next/link";
-import { ArrowRight,Search } from "lucide-react";
+import { Search } from "lucide-react";
 import type { Author } from "@/lib/catalog";
-function Card({author}:{author:Author}){return <Link href={`/authors/${author.slug}`} className="group flex min-h-32 flex-col justify-between rounded-2xl border border-black/[.08] bg-white p-5 shadow-[0_10px_28px_rgba(0,0,0,.06)] transition duration-300 hover:-translate-y-1 hover:border-black/20 hover:shadow-[0_18px_38px_rgba(0,0,0,.12)]"><h3 className="font-serif text-2xl font-semibold leading-snug text-[#171717]">{author.name}</h3><span className="mt-6 flex items-center gap-1 text-xs font-bold text-[#777]">代表作を見る <ArrowRight size={14} className="transition group-hover:translate-x-1"/></span></Link>}
-export function AuthorDirectory({authors}:{authors:Author[]}){const [query,setQuery]=useState("");const famous=useMemo(()=>[...authors].sort((a,b)=>b.popularity-a.popularity).slice(0,30),[authors]);const results=useMemo(()=>{const q=query.trim().toLocaleLowerCase("ja");return q?authors.filter(a=>`${a.name} ${a.kana}`.toLocaleLowerCase("ja").includes(q)):[]},[authors,query]);return <><section className="overflow-hidden pb-14"><h2 className="rail-title">人気の日本人作家30人</h2><div className="book-rail -mx-4 mt-4 flex snap-x snap-mandatory gap-3 overflow-x-auto scroll-smooth px-4 pb-7 md:-mx-8 md:px-8">{famous.map(author=><div key={author.slug} className="w-[58vw] min-w-[210px] max-w-[270px] shrink-0 snap-start"><Card author={author}/></div>)}</div></section><section className="border-t border-black/[.08] py-12"><h2 className="rail-title text-center">日本人作家を検索</h2><label className="mx-auto mt-6 flex max-w-xl items-center gap-3 rounded-2xl border border-black/10 bg-[#f7f7f7] px-5 focus-within:ring-2 focus-within:ring-[#b4232f]"><Search size={18}/><input value={query} onChange={event=>setQuery(event.target.value)} placeholder="作家名・よみがなで検索" className="h-13 min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-black/35"/></label>{query.trim()?<div className="mt-9">{results.length?<div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{results.map(author=><Card key={author.slug} author={author}/>)}</div>:<div className="rounded-2xl border border-dashed border-black/15 p-12 text-center text-sm text-black/50">一致する作家が見つかりませんでした。</div>}</div>:null}</section></>}
+
+const hues = [350, 18, 42, 160, 200, 228, 262, 300];
+const hueOf = (name: string) => hues[[...name].reduce((sum, char) => sum + char.codePointAt(0)!, 0) % hues.length];
+
+/** 作家の顔写真は持っていないので、名前の頭文字を色つきの円で見せる。 */
+export function AuthorChip({ author }: { author: Pick<Author, "slug" | "name"> }) {
+  const hue = hueOf(author.name);
+  return (
+    <Link href={`/authors/${author.slug}`} className="group/author flex flex-col items-center gap-3 text-center outline-none">
+      <span className="grid aspect-square w-full place-items-center rounded-full font-serif text-[clamp(1.6rem,5vw,2.4rem)] font-bold text-white ring-1 ring-white/10 transition duration-300 group-hover/author:-translate-y-1 group-hover/author:ring-white/40 group-focus-visible/author:ring-2 group-focus-visible/author:ring-accent" style={{ background: `linear-gradient(140deg, hsl(${hue} 55% 34%), hsl(${(hue + 40) % 360} 45% 14%))` }}>
+        {[...author.name][0]}
+      </span>
+      <span className="line-clamp-1 text-xs font-bold text-white/80 transition group-hover/author:text-white md:text-[13px]">{author.name}</span>
+    </Link>
+  );
+}
+
+export function AuthorDirectory({ authors }: { authors: Author[] }) {
+  const [query, setQuery] = useState("");
+  const results = useMemo(() => {
+    const q = query.trim().toLocaleLowerCase("ja");
+    return q ? authors.filter((author) => `${author.name} ${author.kana}`.toLocaleLowerCase("ja").includes(q)) : authors;
+  }, [authors, query]);
+
+  return (
+    <>
+      <label className="flex max-w-xl items-center gap-3 rounded-full border border-white/12 bg-white/[.06] px-5 transition focus-within:border-white/40">
+        <Search size={18} className="shrink-0 text-white/50" />
+        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="作家名・よみがなで絞り込む" aria-label="作家名で絞り込む" className="h-12 min-w-0 flex-1 bg-transparent text-base outline-none placeholder:text-white/35 md:text-sm" />
+      </label>
+      <p className="mt-6 text-xs text-white/40">{query.trim() ? `「${query.trim()}」に一致する作家：${results.length}人` : `人気順 ${results.length}人`}</p>
+      {results.length ? (
+        <div className="mt-5 grid grid-cols-3 gap-x-4 gap-y-7 sm:grid-cols-4 md:grid-cols-6 md:gap-x-6 lg:grid-cols-8 xl:grid-cols-10">
+          {results.map((author) => <AuthorChip key={author.slug} author={author} />)}
+        </div>
+      ) : (
+        <div className="mt-5 rounded-2xl border border-dashed border-white/15 p-10 text-center text-sm text-white/50">一致する作家が見つかりませんでした。</div>
+      )}
+    </>
+  );
+}

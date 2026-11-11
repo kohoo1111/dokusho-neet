@@ -1,13 +1,106 @@
 "use client";
+
 import Link from "next/link";
-import { useEffect,useRef,useState } from "react";
-import { ShoppingBag,ShoppingCart } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import type { Book } from "@/lib/catalog";
-import { amazonUrl,rakutenUrl } from "@/lib/catalog";
-import { BookCover } from "./BookCover";
 import { weightedDiscovery } from "@/lib/discovery";
-function Stores({book}:{book:Book}){const shared="inline-flex min-h-11 min-w-0 items-center justify-center gap-1 rounded-2xl border border-black bg-white px-2 text-[11px] font-extrabold shadow-sm transition duration-200 hover:-translate-y-0.5 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2";return <div className="grid grid-cols-2 gap-2"><a href={amazonUrl(book)} target="_blank" rel="sponsored noopener noreferrer" className={`${shared} text-[#146eb4] hover:bg-[#f2f8fc] focus-visible:ring-[#146eb4]`}><ShoppingCart size={13}/><span>Amazon</span></a><a href={rakutenUrl(book)} target="_blank" rel="sponsored noopener noreferrer" className={`${shared} text-[#bf0000] hover:bg-[#fff4f4] focus-visible:ring-[#bf0000]`}><ShoppingBag size={13}/><span>楽天</span></a></div>}
-export function BookCard({book,rank,priority=false,hideActions=false,showMeta=false}:{book:Book;rank?:number;priority?:boolean;hideActions?:boolean;showMeta?:boolean}){return <article className="group min-w-0"><Link href={`/books/${book.id}`} aria-label={`${book.title}の詳細を見る`} className="block rounded-md outline-none focus-visible:ring-2 focus-visible:ring-[#b4232f] focus-visible:ring-offset-4 focus-visible:ring-offset-white"><div className="relative origin-center transition duration-300 ease-out group-hover:z-10 group-hover:scale-[1.06] group-hover:drop-shadow-[0_18px_24px_rgba(0,0,0,.28)]">{rank?<span className="absolute -left-2 -top-2 z-10 grid h-9 min-w-9 place-items-center rounded-full bg-[#b4232f] px-2 text-lg font-black text-white shadow-xl">{rank}</span>:null}<BookCover book={book} priority={priority}/><span className="absolute inset-x-2 bottom-2 translate-y-1 rounded-lg bg-black/80 py-2 text-center text-[11px] font-bold text-white opacity-0 backdrop-blur transition group-hover:translate-y-0 group-hover:opacity-100">詳細を見る</span></div>{showMeta?<><h3 className="mt-3 line-clamp-2 min-h-10 text-[13px] font-bold leading-5 text-[#171717]">{book.title}</h3><p className="mt-1 line-clamp-1 text-xs text-[#777]">{book.author}</p></>:null}</Link>{hideActions?null:<div className="mt-3"><Stores book={book}/></div>}</article>}
-export function BookGrid({books,ranked=false}:{books:Book[];ranked?:boolean}){return <div className="grid grid-cols-2 gap-x-4 gap-y-8 sm:grid-cols-3 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7">{books.map((book,index)=><BookCard key={book.id} book={book} rank={ranked?index+1:undefined}/>)}</div>}
-const popularityOf=(book:Book,index:number)=>book.amazonRank||book.rakutenRank?Math.max(.35,1-Math.min(book.amazonRank??book.rakutenRank??50,50)/60):(book.featured ? .9 : book.awards?.length ? .82 : book.classicGroup ? .72 : Math.max(.4,.68-index*.006));
-export function BookRail({books,ranked=false,priority=false,discoveryKey,limit=12}:{books:Book[];ranked?:boolean;priority?:boolean;discoveryKey?:string;limit?:number}){const [visible,setVisible]=useState(()=>discoveryKey?books.slice(0,limit):books);const applied=useRef(false);useEffect(()=>{if(!discoveryKey||applied.current)return;applied.current=true;setVisible(weightedDiscovery(books,{key:book=>`${discoveryKey}:${book.isbn}`,popularity:popularityOf,limit}))},[books,discoveryKey,limit]);return <div className="book-rail -mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto scroll-smooth px-4 pb-8 pt-3 sm:gap-4 md:-mx-8 md:px-8">{visible.map((book,index)=><div key={book.isbn} className="w-[36vw] min-w-[132px] max-w-[168px] shrink-0 snap-start md:w-[158px]"><BookCard book={book} rank={ranked?index+1:undefined} priority={priority&&index<5}/></div>)}</div>}
+import { BookCover } from "./BookCover";
+import { Rail } from "./Rail";
+import { StoreLinks } from "./StoreLinks";
+
+type CardProps = {
+  book: Book;
+  rank?: number;
+  priority?: boolean;
+  /** hover: PCでカーソルを乗せたときだけ購入ボタンを出す / always: 常に表示 / none: 出さない */
+  actions?: "hover" | "always" | "none";
+  meta?: boolean;
+  sizes?: string;
+};
+
+const lift = "transition duration-300 ease-out group-hover/card:-translate-y-1.5";
+
+export function BookCard({ book, rank, priority = false, actions = "hover", meta = true, sizes }: CardProps) {
+  return (
+    <article className="group/card relative min-w-0">
+      <Link href={`/books/${book.id}`} aria-label={`${book.title}（${book.author}）の詳細を見る`} className="block rounded-md outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-night">
+        <div className={`${lift} group-hover/card:shadow-[0_22px_40px_-12px_rgba(0,0,0,.9)]`}>
+          <BookCover book={book} priority={priority} sizes={sizes} />
+        </div>
+        {meta ? (
+          <>
+            <h3 className="mt-2.5 line-clamp-2 text-[12.5px] font-bold leading-[1.45] text-white/90 md:text-[13px]">{book.title}</h3>
+            <p className="mt-1 line-clamp-1 text-[11px] text-white/45">{book.author}</p>
+          </>
+        ) : null}
+      </Link>
+      {rank ? (
+        <span className={`pointer-events-none absolute -left-1.5 -top-1.5 z-10 grid h-8 min-w-8 place-items-center rounded-full px-2 text-sm font-black shadow-lg ${rank <= 3 ? "bg-gold text-black" : "bg-black/80 text-white ring-1 ring-white/20"}`}>{rank}</span>
+      ) : null}
+      {actions === "hover" ? (
+        // 表紙と同じ位置に重ねる。タッチ端末ではhoverが効かないのでPCだけに出す
+        <div className={`pointer-events-none absolute inset-x-0 top-0 hidden aspect-[2/3] items-end md:flex ${lift}`}>
+          <div className="w-full rounded-b-md bg-gradient-to-t from-black/95 via-black/70 to-transparent p-2 pt-8 opacity-0 transition duration-200 group-hover/card:pointer-events-auto group-hover/card:opacity-100 group-focus-within/card:pointer-events-auto group-focus-within/card:opacity-100">
+            <StoreLinks book={book} />
+          </div>
+        </div>
+      ) : null}
+      {actions === "always" ? <div className="mt-2.5"><StoreLinks book={book} /></div> : null}
+    </article>
+  );
+}
+
+export function BookGrid({ books, ranked = false, actions = "always" }: { books: Book[]; ranked?: boolean; actions?: CardProps["actions"] }) {
+  return (
+    <div className="grid grid-cols-2 gap-x-3 gap-y-8 min-[480px]:grid-cols-3 md:grid-cols-4 md:gap-x-5 lg:grid-cols-6 xl:grid-cols-7">
+      {books.map((book, index) => <BookCard key={book.isbn || book.id} book={book} rank={ranked ? index + 1 : undefined} actions={actions} priority={index < 6} sizes="(max-width: 480px) 46vw, (max-width: 768px) 31vw, 200px" />)}
+    </div>
+  );
+}
+
+const popularityOf = (book: Book, index: number) =>
+  book.amazonRank || book.rakutenRank
+    ? Math.max(0.35, 1 - Math.min(book.amazonRank ?? book.rakutenRank ?? 50, 50) / 60)
+    : book.featured ? 0.9 : book.awards?.length ? 0.82 : book.classicGroup ? 0.72 : Math.max(0.4, 0.68 - index * 0.006);
+
+/**
+ * 横スクロールの本棚。discoveryKey を渡すと、訪問のたびに並びを入れ替えて
+ * 毎回ちがう本と出会えるようにする（最近見せた本は出にくくなる）。
+ */
+export function BookRail({ books, priority = false, discoveryKey, limit = 14, label }: { books: Book[]; priority?: boolean; discoveryKey?: string; limit?: number; label?: string }) {
+  const [visible, setVisible] = useState(() => (discoveryKey ? books.slice(0, limit) : books));
+  const applied = useRef(false);
+  useEffect(() => {
+    if (!discoveryKey || applied.current) return;
+    applied.current = true;
+    setVisible(weightedDiscovery(books, { key: (book) => `${discoveryKey}:${book.isbn}`, popularity: popularityOf, limit }));
+  }, [books, discoveryKey, limit]);
+
+  if (!visible.length) return <p className="py-8 text-sm text-white/40">作品データを準備中です。</p>;
+  return (
+    <Rail label={label}>
+      {visible.map((book, index) => (
+        <div key={book.isbn || book.id} className="w-[30vw] min-w-[108px] max-w-[150px] shrink-0 snap-start sm:w-[150px] lg:w-[172px] lg:max-w-none">
+          <BookCard book={book} priority={priority && index < 6} />
+        </div>
+      ))}
+    </Rail>
+  );
+}
+
+/** 大きな順位の数字と表紙を並べるTOP10の棚。 */
+export function TopRail({ books, label }: { books: Book[]; label?: string }) {
+  if (!books.length) return <p className="py-8 text-sm text-white/40">ランキングを準備中です。</p>;
+  return (
+    <Rail label={label}>
+      {books.map((book, index) => (
+        <div key={book.isbn || book.id} className="flex shrink-0 snap-start items-end">
+          <span aria-hidden="true" className="rank-numeral relative z-0 -mr-2 md:-mr-3">{index + 1}</span>
+          <div className="relative z-10 w-[27vw] min-w-[100px] max-w-[132px] sm:w-[132px] lg:w-[150px] lg:max-w-none">
+            <BookCard book={book} priority={index < 4} meta={false} />
+          </div>
+        </div>
+      ))}
+    </Rail>
+  );
+}

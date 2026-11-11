@@ -73,3 +73,12 @@ Vercel のプロジェクト名は `dokusho-buta` です。GitHub の本番ブ�
 ## 注意
 
 Google AdSense は現時点で未実装です。導入する場合は`src/app/layout.tsx`に所有権確認コード・広告コードを追加してください。
+## 計測（閲覧数・購入クリック）
+
+- 本の詳細ページを開くと閲覧1回、Amazon／楽天ボタンを押すとクリック1回を `/api/track` が `book_stats`（累計）と `book_stats_daily`（日別）に加算します。保存するのはISBNと種別だけで、個人を特定する情報は持ちません。
+- 人気度（`popularity_score`）は「閲覧 + クリック×5」を対数で0〜1に丸めた値で、棚に並ぶ本の選ばれやすさに反映されます。
+- `NEXT_PUBLIC_GA_MEASUREMENT_ID` を設定すると GA4 も読み込み、`book_view`／`affiliate_click` イベントを送ります。未設定なら何も送りません。
+
+## データベース無しでの画面確認
+
+`DATABASE_URL` が無い状態で `pnpm dev` を起動すると、同梱の厳選カタログ（約30冊＋週間ランキング）で全ページを表示します。デザイン確認用で、本番ビルドでは使われません。

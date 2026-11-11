@@ -1,12 +1,19 @@
 import { and, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
 import { unstable_cache } from "next/cache";
+import { cache } from "react";
 import { getDb, isDatabaseConfigured } from "@/db/client";
 import { authorAliases, authors, bookStats, editions, publishers, rankingEntries, rankingSnapshots, relatedBooks, themes, workAuthors, works, workThemes } from "@/db/schema";
-import { books, booksForTheme, type Book } from "@/lib/catalog";
+import { authors as catalogAuthorList, books, booksByAuthor, booksForTheme, relatedBooks as relatedCatalogBooks, type Book } from "@/lib/catalog";
+import { currentRanking } from "@/lib/current-ranking";
 import { normalizeSearchText } from "@/lib/text-normalization";
 import { selectWeighted } from "@/lib/scores";
 
 export type CatalogBook = Book & { databaseId?: string };
+
+// DATABASE_URL の無いローカル開発では、同梱の厳選カタログで画面を確認できるようにする。
+// 本番ビルド（NODE_ENV=production）では決して使わない。
+const previewMode = () => !isDatabaseConfigured() && process.env.NODE_ENV !== "production";
+const previewBook = (book: Book): CatalogBook => ({ ...book, databaseId: `preview:${book.id}` });
 type DatabaseBook = CatalogBook & { popularity: number; quality: number; recommend: number; views: number; lastShownAt: Date | null };
 
 const dbShelf = unstable_cache(async (themeSlug?: string) => {
@@ -41,7 +48,8 @@ async function dbBooksByIsbns(isbns: string[], limit = 200): Promise<CatalogBook
   } catch { return []; }
 }
 
-export async function rankingShelf(limit = 20) {
+export async function rankingShelf(limit = 20): Promise<CatalogBook[]> {
+  if (previewMode()) return currentRanking.slice(0, limit).map(previewBook);
   if (!isDatabaseConfigured()) return [];
   try {
     const latest = (await getDb().selectDistinct({ id: rankingSnapshots.id, capturedAt: rankingSnapshots.capturedAt }).from(rankingSnapshots)
@@ -56,16 +64,20 @@ export async function rankingShelf(limit = 20) {
 
 export async function awardShelf(options: { name?: string; year?: number; limit?: number } = {}) {
   const selected = books.filter((book) => book.awards?.some((award) => (!options.name || award.name === options.name) && (!options.year || award.year === options.year)));
+  if (previewMode()) return selected.slice(0, options.limit ?? 200).map(previewBook);
   const rows = await dbBooksByIsbns(selected.map((book) => book.isbn), options.limit ?? 200);
   return rows.map((row) => ({ ...row, awards: selected.find((book) => book.isbn === row.isbn)?.awards }));
 }
 
 export async function classicShelf(group: string, limit = 50) {
+  if (previewMode()) return books.filter((book) => book.classicGroup === group).slice(0, limit).map(previewBook);
   return dbBooksByIsbns(books.filter((book) => book.classicGroup === group).map((book) => book.isbn), limit);
 }
 
-export async function bookRecord(slug: string) {
+// 同じリクエスト内で generateMetadata・ページ本体・OGP画像から呼ばれても、DBへの問い合わせは1回で済ませる
+export const bookRecord = cache(async (slug: string): Promise<CatalogBook | undefined> => {
   slug = decodeURIComponent(slug);
+  if (previewMode()) { const found = [...books, ...currentRanking].find((book) => book.id === slug); return found ? previewBook(found) : undefined; }
   if (!isDatabaseConfigured()) return undefined;
   try {
     const row = (await getDb().select({ work: works, edition: editions, author: authors, publisher: publishers.name }).from(works)
@@ -76,7 +88,7 @@ export async function bookRecord(slug: string) {
     const curated = books.find((book) => book.isbn === row.edition.isbn13);
     return { id: row.work.slug, databaseId: row.work.id, title: row.work.title, author: row.author.name, authorSlug: row.author.slug, isbn: row.edition.isbn13 ?? "", synopsis: row.work.synopsis ?? "", genres: [], publishedYear: 0, coverImage: row.edition.coverUrl ?? undefined, isbn10: row.edition.isbn10 ?? undefined, rakutenUrl: row.edition.rakutenUrl ?? undefined, publisher: row.publisher ?? undefined, awards: curated?.awards } satisfies CatalogBook;
   } catch { return undefined; }
-}
+});
 
 export async function bookByIsbn(isbn: string) {
   return (await dbBooksByIsbns([isbn], 1))[0];
@@ -93,7 +105,8 @@ export async function sitemapDirectory() {
   } catch { return { books: [], authors: [] }; }
 }
 
-export async function relatedWorkShelf(workId: string, limit = 8) {
+export async function relatedWorkShelf(workId: string, limit = 8): Promise<CatalogBook[]> {
+  if (previewMode()) { const source = books.find((book) => `preview:${book.id}` === workId); return source ? relatedCatalogBooks(source).slice(0, limit).map(previewBook) : books.slice(0, limit).map(previewBook); }
   if (!isDatabaseConfigured()) return [];
   try {
     const rows = await getDb().select({ isbn: editions.isbn13 }).from(relatedBooks)
@@ -105,6 +118,7 @@ export async function relatedWorkShelf(workId: string, limit = 8) {
 
 export async function discoveryShelf(options: { themeSlug?: string; fallbackTheme?: string; limit?: number; recentIds?: string[] } = {}): Promise<Book[]> {
   const limit = options.limit ?? 20;
+  if (previewMode()) return (options.fallbackTheme ? booksForTheme(options.fallbackTheme) : books).slice(0, limit).map(previewBook);
   if (!isDatabaseConfigured()) return [];
   try {
     const candidates = await dbShelf(options.themeSlug);
@@ -123,6 +137,7 @@ export async function authorWorks(slug: string, limit = 20) {
   // 作家スラッグは日本語なのでURLではパーセントエンコードされる。
   // ここで戻さないと該当作家が引けず、作家ページの作品一覧が常に空になる。
   slug = decodeURIComponent(slug);
+  if (previewMode()) return booksByAuthor(slug).slice(0, limit).map(previewBook);
   if (!isDatabaseConfigured()) return [];
   try {
     const db = getDb();
@@ -137,6 +152,7 @@ export async function authorWorks(slug: string, limit = 20) {
 export async function searchCatalog(query: string, limit = 30) {
   const normalized = normalizeSearchText(query);
   if (!normalized) return [];
+  if (previewMode()) return books.filter((book) => `${book.title} ${book.author}`.includes(query.trim())).slice(0, limit).map(previewBook);
   if (!isDatabaseConfigured()) return [];
   try {
   const db = getDb(); const pattern = `%${normalized}%`;
@@ -150,6 +166,7 @@ export async function searchCatalog(query: string, limit = 30) {
 }
 
 export async function authorDirectory(limit = 30) {
+  if (previewMode()) return [...catalogAuthorList].sort((a, b) => b.popularity - a.popularity).slice(0, limit);
   if (!isDatabaseConfigured()) return [];
   try { const db = getDb();
     const rows=await db.select({ slug: authors.slug, name: authors.name, kana: authors.normalizedName, popularity: authors.popularityScore, bio: authors.biography }).from(authors).where(eq(authors.status, "ready")).orderBy(desc(authors.popularityScore)).limit(limit);
@@ -157,11 +174,12 @@ export async function authorDirectory(limit = 30) {
   } catch { return []; }
 }
 
-export async function authorRecord(slug: string) {
+export const authorRecord = cache(async (slug: string) => {
   slug = decodeURIComponent(slug);
+  if (previewMode()) return catalogAuthorList.find((author) => author.slug === slug);
   if (!isDatabaseConfigured()) return undefined;
   try {
     const row = (await getDb().select({ slug: authors.slug, name: authors.name, kana: authors.normalizedName, popularity: authors.popularityScore, bio: authors.biography }).from(authors).where(eq(authors.slug, slug)).limit(1))[0];
     return row ? { ...row, bio: row.bio ?? `${row.name}の代表作と関連作品を紹介します。` } : undefined;
   } catch { return undefined; }
-}
+});

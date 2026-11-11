@@ -13,10 +13,11 @@ export function selectWeighted<T extends WeightedCandidate>(items: T[], limit: n
   return items.map((item) => {
     const ageDays = item.lastShownAt ? Math.max(0, (now - item.lastShownAt.getTime()) / 86_400_000) : 90;
     const recency = Math.min(1.5, .4 + ageDays / 30);
-    const exposure = 1 / Math.sqrt(1 + item.views);
     const duplicate = recentIds.has(item.id) ? .15 : 1;
     const base = .15 + item.popularity * .28 + item.quality * .27 + item.recommend * .3;
-    const weight = Math.max(.0001, base * recency * exposure * duplicate);
+    // views は実際の閲覧数（/api/track が加算）なので、露出の多さとして減点には使わない。
+    // よく見られている本ほど popularity が上がり、選ばれやすくなる。
+    const weight = Math.max(.0001, base * recency * duplicate);
     return { item, key: -Math.log(Math.max(Math.random(), Number.EPSILON)) / weight };
   }).sort((a, b) => a.key - b.key).slice(0, limit).map(({ item }) => item);
 }
