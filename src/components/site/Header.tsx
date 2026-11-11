@@ -14,9 +14,9 @@ export function Header() {
   return (
     <header className="sticky top-0 z-50 border-b border-white/[.06] bg-night/75 backdrop-blur-xl">
       <div className="mx-auto flex h-14 max-w-[1600px] items-center gap-8 px-4 md:h-16 md:px-10">
-        <Link href="/" className="flex shrink-0 items-center gap-2.5" aria-label="読書家ニート ホーム">
-          <Image src="/brand-logo.png" alt="" width={34} height={34} className="h-8 w-8 rounded-full object-cover ring-1 ring-white/15" priority />
-          <span className="font-serif text-[17px] font-bold tracking-[.08em]">読書家ニート</span>
+        <Link href="/" className="flex shrink-0 items-center gap-2.5" aria-label="豚に文庫 ホーム">
+          <Image src="/mark.png" alt="" width={36} height={36} className="h-9 w-9 rounded-[10px]" priority />
+          <span className="font-serif text-[17px] font-bold tracking-[.08em]">豚に文庫</span>
         </Link>
         <nav className="hidden flex-1 items-center gap-7 md:flex" aria-label="メインナビゲーション">
           {nav.map((item) => (

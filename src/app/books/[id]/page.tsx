@@ -9,7 +9,7 @@ import { Breadcrumbs } from "@/components/site/Breadcrumbs";
 import { Shelf } from "@/components/site/PageIntro";
 import { amazonUrl, coverUrl, publisherName, rakutenUrl } from "@/lib/catalog";
 import { authorWorks, bookRecord, relatedWorkShelf } from "@/lib/catalog-repository";
-import { breadcrumbJson, createMetadata, excerpt, SITE_URL } from "@/lib/seo";
+import { breadcrumbJson, createMetadata, excerpt, jsonLd, SITE_URL } from "@/lib/seo";
 
 // 本の情報はめったに変わらないので、初回アクセス時に生成して1時間キャッシュする
 export const revalidate = 3600;
@@ -50,7 +50,7 @@ export default async function Page({ params }: Props) {
 
   return (
     <div className="relative isolate">
-      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify([crumbs, product]) }} />
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLd([crumbs, product]) }} />
       <ViewTracker isbn={book.isbn} title={book.title} />
 
       {/* 背景：表紙をぼかして、その本の色でページを染める */}

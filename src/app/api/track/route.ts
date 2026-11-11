@@ -8,6 +8,18 @@ const payload = z.object({ event: z.enum(["view", "amazon", "rakuten"]), isbn: z
 const BOT = /bot|crawl|spider|slurp|preview|headless|lighthouse|monitor|curl|wget|python|axios/i;
 const done = () => new Response(null, { status: 204 });
 
+// 同じ接続元からの連続送信を抑える（1分あたり40回まで）。数字を水増しして棚の並びを操作されにくくするための簡易的な歯止め。
+// サーバーの1インスタンス内だけの記憶なので完全ではないが、単純な連打は止められる。
+const WINDOW = 60_000, LIMIT = 40;
+const hits = new Map<string, { count: number; resetAt: number }>();
+function limited(key: string) {
+  const now = Date.now();
+  if (hits.size > 5000) for (const [k, v] of hits) if (v.resetAt < now) hits.delete(k);
+  const entry = hits.get(key);
+  if (!entry || entry.resetAt < now) { hits.set(key, { count: 1, resetAt: now + WINDOW }); return false; }
+  return ++entry.count > LIMIT;
+}
+
 export async function POST(request: Request) {
   if (!isDatabaseConfigured()) return done();
 
@@ -19,8 +31,14 @@ export async function POST(request: Request) {
     try { if (new URL(origin).host !== new URL(request.url).host) return done(); } catch { return done(); }
   }
 
+  const client = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
+  if (limited(client)) return new Response(null, { status: 429 });
+
+  // 本文は {"event":"…","isbn":"…"} だけなので、大きな送信は読まずに断る
+  if (Number(request.headers.get("content-length") ?? 0) > 200) return new Response(null, { status: 413 });
+
   let data: z.infer<typeof payload>;
-  try { data = payload.parse(JSON.parse(await request.text())); } catch { return new Response(null, { status: 400 }); }
+  try { data = payload.parse(JSON.parse((await request.text()).slice(0, 200))); } catch { return new Response(null, { status: 400 }); }
 
   const views = data.event === "view" ? 1 : 0;
   const amazon = data.event === "amazon" ? 1 : 0;

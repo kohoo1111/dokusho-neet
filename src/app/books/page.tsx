@@ -12,7 +12,7 @@ const suggestions = ["東野圭吾", "辻村深月", "村上春樹", "伊坂幸�
 
 export default async function Page({ searchParams }: { searchParams: Promise<{ q?: string }> }) {
   const { q = "" } = await searchParams;
-  const query = q.trim();
+  const query = String(q).trim().slice(0, 120);
   const results = query ? await searchCatalog(query) : [];
   return (
     <PageShell>

@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 import { isDatabaseConfigured } from "@/db/client";
 import { popularImportIsbns } from "@/lib/import-candidates";
@@ -7,9 +8,15 @@ import { processDueRetryPending } from "@/lib/pipeline-orchestrator";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
+// 文字列の単純比較は、一致した文字数によって応答時間がわずかに変わり、秘密の値を推測する手がかりになる。
+function sameSecret(given: string | null, expected: string) {
+  const a = Buffer.from(given ?? ""), b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
 export async function GET(request: Request) {
   const secret = process.env.CRON_SECRET;
-  if (!secret || request.headers.get("authorization") !== `Bearer ${secret}`) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!secret || !sameSecret(request.headers.get("authorization"), `Bearer ${secret}`)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (!isDatabaseConfigured()) return NextResponse.json({ error: "Database is not configured" }, { status: 503 });
   const retry = await processDueRetryPending();
   if (retry.processed) return NextResponse.json({ kind: "retry_pending", ...retry }, { headers: { "Cache-Control": "private, no-store" } });

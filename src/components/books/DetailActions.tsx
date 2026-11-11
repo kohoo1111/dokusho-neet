@@ -23,7 +23,7 @@ export function MobileBuyBar({ book }: { book: StoreTarget }) {
 export function ShareButton({ title }: { title: string }) {
   const [copied, setCopied] = useState(false);
   const share = async () => {
-    const data = { title, text: `${title} | 読書家ニート`, url: window.location.href };
+    const data = { title, text: `${title} | 豚に文庫`, url: window.location.href };
     try {
       if (navigator.share) { await navigator.share(data); return; }
       await navigator.clipboard.writeText(data.url);

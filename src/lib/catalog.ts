@@ -117,8 +117,11 @@ const rawBooks: Book[] = [
 
 export const books: Book[] = rawBooks;
 
+// 表紙画像を読み込んでよい配信元。DBの値は外部APIから取り込んだものなので、ここに無いホストのURLは使わない。
+export const COVER_HOSTS = /^https?:\/\/(books\.google\.com|[a-z0-9.-]+\.googleusercontent\.com|thumbnail\.image\.rakuten\.co\.jp|tshop\.r10s\.jp|covers\.openlibrary\.org)\//i;
+
 export function coverUrl(book: Book) {
-  return book.coverImage??`https://thumbnail.image.rakuten.co.jp/@0_mall/book/cabinet/${book.isbn.slice(-4)}/${book.isbn}.jpg`;
+  return (book.coverImage && COVER_HOSTS.test(book.coverImage) ? book.coverImage : undefined)??`https://thumbnail.image.rakuten.co.jp/@0_mall/book/cabinet/${book.isbn.slice(-4)}/${book.isbn}.jpg`;
 }
 // 購入リンクは書影カードなど本以外の型からも組み立てるため、必要な項目だけを受け取る
 type PurchaseTarget = { isbn: string; title: string; author: string; isbn10?: string; rakutenUrl?: string };
@@ -144,7 +147,8 @@ function withRakutenAffiliate(url: string) {
 }
 
 export function rakutenUrl(book: PurchaseTarget) {
-  if (book.rakutenUrl) return withRakutenAffiliate(book.rakutenUrl);
+  // DBに入っているURLが楽天のものであるときだけ使う（javascript: などの不正なリンク先を防ぐ）
+  if (book.rakutenUrl && /^https:\/\/([a-z0-9-]+\.)*rakuten\.co\.jp\//i.test(book.rakutenUrl)) return withRakutenAffiliate(book.rakutenUrl);
   const keyword = book.isbn || `${book.title} ${book.author}`;
   return withRakutenAffiliate(`https://books.rakuten.co.jp/search?sitem=${encodeURIComponent(keyword)}`);
 }

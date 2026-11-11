@@ -1,5 +1,5 @@
 import { ImageResponse } from "next/og";
-import { coverUrl } from "@/lib/catalog";
+import { COVER_HOSTS, coverUrl } from "@/lib/catalog";
 import { bookRecord } from "@/lib/catalog-repository";
 import { SITE_NAME } from "@/lib/seo";
 
@@ -22,6 +22,8 @@ async function loadFont(text: string) {
 
 // 表紙は事前に取得して埋め込む（取得に失敗しても画像生成そのものは続ける）
 async function loadCover(url: string) {
+  // サーバーから取りに行くのは、許可した画像配信元だけ
+  if (!COVER_HOSTS.test(url)) return null;
   try {
     const response = await fetch(url.replace("http://", "https://"), { signal: AbortSignal.timeout(4000) });
     const type = response.headers.get("content-type") ?? "";

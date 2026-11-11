@@ -155,7 +155,8 @@ export async function searchCatalog(query: string, limit = 30) {
   if (previewMode()) return books.filter((book) => `${book.title} ${book.author}`.includes(query.trim())).slice(0, limit).map(previewBook);
   if (!isDatabaseConfigured()) return [];
   try {
-  const db = getDb(); const pattern = `%${normalized}%`;
+  // 検索語に含まれる % や _ は「何にでも一致」の記号として働いてしまうので、ただの文字として扱う
+  const db = getDb(); const pattern = `%${normalized.replace(/[\\%_]/g, "\\$&")}%`;
   const rows = await db.selectDistinct({ work: works, edition: editions, author: authors }).from(works)
     .innerJoin(workAuthors, eq(workAuthors.workId, works.id)).innerJoin(authors, eq(authors.id, workAuthors.authorId))
     .leftJoin(authorAliases, eq(authorAliases.authorId, authors.id)).innerJoin(editions, eq(editions.workId, works.id))
